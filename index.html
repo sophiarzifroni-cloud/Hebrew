@@ -168,6 +168,16 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
 .preview .pv .he { font-size: 22px; }
 .preview .pv .tr { color: var(--muted); font-style: italic; font-size: 14px; }
 .preview .dup { opacity: .55; }
+.hmic { display: inline-flex; align-items: center; gap: 6px; padding: 7px 12px; color: var(--accent); border-color: var(--accent); }
+.hmic svg { width: 16px; height: 16px; }
+.mic.off { background: var(--muted); box-shadow: none; }
+.interests { border-top: 1px solid var(--line); padding-top: 12px; }
+.interests .chip { padding: 0; overflow: hidden; }
+.chip-btn { border: none; background: none; padding: 4px 4px 4px 12px; font-size: 14px; }
+.chip[aria-pressed="false"] .chip-btn { text-decoration: line-through; color: var(--muted); }
+.chip-x { border: none; background: none; padding: 4px 10px 4px 4px; color: var(--muted); font-size: 16px; line-height: 1; }
+.story-title { margin: 0 0 4px; font-size: 17px; }
+.topic { align-self: flex-start; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
 /* Listening */
 .listen { display: flex; flex-direction: column; gap: 16px; }
 .player { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-block: 8px; }
@@ -199,6 +209,7 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
   <div class="top-inner">
     <div class="brand"><span class="he" lang="he">קֶשֶׁר</span><span>Kesher</span></div>
     <div class="stats" id="stats"></div>
+    <button class="btn hmic" data-act="hmic" aria-label="Add words by voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>Add words</button>
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="cards" aria-selected="true">Flashcards</button>
       <button role="tab" data-tab="sentences" aria-selected="false">Sentences</button>
@@ -223,11 +234,13 @@ const S = {
   sent: { level: "beginner", focus: "due", picked: new Set(), items: [], mode: "read", busy: false, error: "" },
   confirmDel: null, filter: "",
   dict: null, dictTarget: "voice", dictState: "idle", listenPartial: "",
-  webVoice: null, heWarn: false,
+  webVoice: null, heWarn: false, lastTitle: "",
+  prefs: { topics: [], off: [], about: "", story: true }, prefsDoc: false,
   listen: { items: [], i: 0, focus: "due", busy: false, checking: false, error: "", right: 0, close: 0 },
   voice: { text: "", partial: "", state: "idle", lang: "en", busy: false, items: [], error: "", msg: "" },
 };
 const MIC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>';
+const DEFAULT_TOPICS = ["the environment", "animals", "veganism", "technology", "nature", "hiking", "travel", "different countries", "yummy vegan food"];
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>';
 const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
@@ -265,6 +278,11 @@ async function boot() {
   S.sample = sample; S.tts = tts;
   if (dict) setupDictation(dict);
   setupAudio();
+  S.prefs.topics = DEFAULT_TOPICS.slice();
+  const lp = ls.get("kesher-interests"); if (lp) Object.assign(S.prefs, lp);
+  if (db) db.doc("settings/profile").onSnapshot(snap => {
+    if (snap.exists) { const d = snap.data(); S.prefsDoc = true; Object.assign(S.prefs, { topics: Array.isArray(d.topics) ? d.topics : S.prefs.topics, off: Array.isArray(d.off) ? d.off : [], about: typeof d.about === "string" ? d.about : "", story: d.story !== false }); render(); }
+  }, () => {});
   if (db) {
     S.db = db; S.mode = "db";
     const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
@@ -292,7 +310,7 @@ function stats() {
 // Re-rendering replaces #main, so carry over what the person was typing and where the cursor was.
 function render() {
   const keep = {};
-  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.id !== "v-text" && el.id !== "l-answer" && el.id !== "f-search") keep[el.id] = el.value; });
+  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.id !== "v-text" && el.id !== "l-answer" && el.id !== "t-about" && el.id !== "f-search") keep[el.id] = el.value; });
   const act = document.activeElement; const actId = act?.id; let sel = null;
   try { sel = act && "selectionStart" in act ? [act.selectionStart, act.selectionEnd] : null; } catch {}
   renderInner();
@@ -411,6 +429,7 @@ function viewSentences() {
           ${[["due", "Due words"], ["weak", "Weakest"], ["mix", "Random"], ["pick", "I'll choose"]].map(([v, l]) => `<button data-act="focus" data-v="${v}" aria-pressed="${t.focus === v}">${l}</button>`).join("")}</div></div>
       </div>
       ${chips}
+      ${viewInterests()}
       <div class="row">
         <button class="btn primary" data-act="gen" ${t.busy || !S.sample || (t.focus === "pick" && !t.picked.size) ? "disabled" : ""}>${t.busy ? "Writing sentences…" : t.items.length ? "Write new sentences" : "Write 6 sentences"}</button>
         ${t.busy ? `<button class="btn" data-act="stop">Stop</button>` : ""}
@@ -424,7 +443,7 @@ function viewSentences() {
         <button data-act="smode" data-v="read" aria-pressed="${t.mode === "read"}">Read</button>
         <button data-act="smode" data-v="blank" aria-pressed="${t.mode === "blank"}">Fill the blank</button>
         <button data-act="smode" data-v="translate" aria-pressed="${t.mode === "translate"}">Translate</button></div></div>
-      <div class="panel">${t.items.map((it, i) => sentenceHtml(it, i)).join("")}</div>`;
+      <div class="panel">${t.title ? `<h3 class="story-title">${esc(t.title)}</h3>` : ""}${t.items.map((it, i) => sentenceHtml(it, i)).join("")}</div>`;
   }
   return `<div><h2>Sentences</h2><p class="sub">Claude writes new sentences using your words, so you see them in real context. Highlighted words are from your list.</p></div>${controls}${list}`;
 }
@@ -458,7 +477,7 @@ function sentenceHtml(it, i) {
   } else {
     extra = it.shown ? reveal(it) : `<div class="row" style="justify-content:flex-end"><button class="btn small" data-act="show" data-i="${i}">Show meaning</button></div>`;
   }
-  return `<div class="sentence"><div class="line">${speak}${heLine}</div>${extra}</div>`;
+  return `<div class="sentence">${it.topic ? `<span class="topic">${esc(it.topic)}</span>` : ""}<div class="line">${speak}${heLine}</div>${extra}</div>`;
 }
 function reveal(it, skipEn) {
   return `<div class="reveal">${it.tr ? `<div class="tr">${esc(it.tr)}</div>` : ""}${skipEn ? "" : `<div>${esc(it.en)}</div>`}${it.grammar ? `<div class="gram">${esc(it.grammar)}</div>` : ""}</div>`;
@@ -476,7 +495,7 @@ async function generate() {
   t.busy = true; t.error = ""; render();
   genCtl = new AbortController();
   try {
-    t.items = await fetchSentences(targets, t.level, genCtl.signal);
+    t.items = await fetchSentences(targets, t.level, genCtl.signal); t.title = S.lastTitle;
     if (!t.items.length) t.error = "Claude's answer didn't contain any sentences. Try again.";
   } catch (e) {
     if (e?.code !== "cancelled") t.error = SAMPLE_ERR[e?.code] || "Couldn't write sentences right now. Try again in a moment.";
@@ -485,6 +504,9 @@ async function generate() {
 
 // Asks Claude for 6 sentences built from the learner's words; [brackets] mark their words.
 async function fetchSentences(targets, level, signal) {
+  const picked = S.prefs.topics.filter(t => !S.prefs.off.includes(t));
+  const topics = (picked.length ? shuffle(picked) : DEFAULT_TOPICS).join(", ");
+  const about = S.prefs.about.trim() || "an adult learner who loves animals, nature and travel, and eats vegan.";
   const vocab = S.words.map(w => `${w.he} = ${w.en}${w.pos ? ` (${w.pos})` : ""}`).join("\n");
   const focus = targets.map(w => `${w.he} = ${w.en}`).join("\n");
   const levelText = {
@@ -501,6 +523,16 @@ Focus words for this round (use each at least once across the set):
 ${focus}
 
 Write 6 sentences. ${levelText}
+
+MAKE THEM MEMORABLE. Use these techniques from memory research:
+- Self-reference: the learner is the main character. Write in first person ("I", "we") or address them as "you". About the learner: ${about}
+- Personal interest: set the sentences in these topics, a different one per sentence where possible: ${topics}.
+- Vivid and concrete: things you can picture, hear, smell or taste. Name specific places (a real trail, country or city), specific plant-based dishes, specific animals, colors and sounds. Make the learner's words act on each other inside one scene (the dog steals the hummus), not just sit side by side. Avoid flat, abstract or textbook lines like "The man has a book."
+- Emotion and humor: give most sentences a feeling, a small surprise or a gentle joke. Make 1 or 2 of the 6 playful or a bit absurd; odd images stand out most when mixed in with normal ones.
+- ${S.prefs.story ? "Story: link the 6 sentences into one short story in order, with a beginning, a small problem and a happy ending. Give it a short English title." : "Distinct scenes: each sentence stands alone in a clearly different setting."}
+- Values: food is always vegan; animals are respected and never eaten, hunted or harmed.
+- Correctness and the level above always come first. Never make a sentence harder just to make it fun.
+
 Rules:
 - Build sentences mostly from the learner's vocabulary. You may add very common basic words (pronouns, את, של, ב-, ל-, ה-, זה, יש, אין, גם, מאוד, ו-) and a few simple everyday words when needed.
 - Conjugate and inflect naturally (gender, number, tense, prefixes). The sentence must be correct, natural Israeli Hebrew.
@@ -510,16 +542,18 @@ Rules:
 - "distractors": 3 other plausible Hebrew words or forms that do NOT fit that blank, preferably from the learner's list, no nikkud.
 - "tr": transliteration in simple English letters.
 - "grammar": one short plain-English note on a form that changed (e.g. "אכלתי = I ate, past tense of לאכול"), or "" if nothing notable.
+- "topic": the topic of the sentence in 1-3 English words.
 
-Reply with only a JSON array like:
-[{"he":"אני [אוכל] [תפוח]","tr":"ani okhel tapuakh","en":"I eat an apple.","answer":"אוכל","distractors":["שותה","הולך","ספר"],"grammar":""}]`;
+Reply with only JSON like:
+{"title":"${S.prefs.story ? "The Hummus Emergency" : ""}","sentences":[{"he":"אני [אוכל] [תפוח]","tr":"ani okhel tapuakh","en":"I eat an apple.","answer":"אוכל","distractors":["שותה","הולך","ספר"],"grammar":"","topic":"vegan food"}]}`;
   const out = await S.sample.json(prompt, { signal, cache: false });
-  const arr = Array.isArray(out) ? out : [];
+  const arr = Array.isArray(out) ? out : Array.isArray(out?.sentences) ? out.sentences : [];
+  S.lastTitle = S.prefs.story && typeof out?.title === "string" ? out.title : "";
   return arr.filter(x => x && typeof x.he === "string" && typeof x.en === "string").map(x => {
     const answer = String(x.answer || (x.he.match(/\[([^\]]+)\]/) || [])[1] || "");
     const dis = (Array.isArray(x.distractors) ? x.distractors.map(String) : []).filter(d => strip(d) !== strip(answer));
     while (dis.length < 3) { const r = S.words[Math.floor(Math.random() * S.words.length)]; const c = strip(r.he); if (c !== strip(answer) && !dis.includes(c)) dis.push(c); if (S.words.length < 4) break; }
-    return { he: x.he, tr: String(x.tr || ""), en: x.en, grammar: String(x.grammar || ""), answer, options: shuffle([answer, ...dis.slice(0, 3)]), shown: false, picked: null };
+    return { he: x.he, tr: String(x.tr || ""), en: x.en, grammar: String(x.grammar || ""), topic: String(x.topic || ""), answer, options: shuffle([answer, ...dis.slice(0, 3)]), shown: false, picked: null };
   });
 }
 
@@ -527,6 +561,32 @@ Reply with only a JSON array like:
 function wordForForm(form) {
   const a = strip(form).trim();
   return S.words.find(w => strip(w.he).trim() === a) || S.words.find(w => { const b = strip(w.he).trim(); return b.length > 1 && (a.includes(b) || b.includes(a)); });
+}
+
+let prefsTimer = null;
+function savePrefs() {
+  ls.set("kesher-interests", { topics: S.prefs.topics, off: S.prefs.off, about: S.prefs.about, story: S.prefs.story });
+  if (S.mode !== "db") return;
+  clearTimeout(prefsTimer);
+  prefsTimer = setTimeout(() => {
+    S.db.doc("settings/profile").set({ topics: S.prefs.topics, off: S.prefs.off, about: S.prefs.about, story: S.prefs.story }).catch(() => {});
+  }, 600);
+}
+function viewInterests() {
+  const P = S.prefs;
+  return `<details class="interests" ${S.openInterests ? "open" : ""}>
+    <summary>Your interests <span class="note">(${P.topics.filter(t => !P.off.includes(t)).length} topics on${P.story ? ", mini story" : ""})</span></summary>
+    <div style="display:flex;flex-direction:column;gap:12px;margin-top:12px">
+      <p class="note" style="margin:0">Sentences are built around you and these topics. Tap a topic to turn it off for now.</p>
+      <div class="chips">${P.topics.map((t, i) => `<span class="chip" aria-pressed="${!P.off.includes(t)}"><button class="chip-btn" data-act="ttoggle" data-i="${i}">${esc(t)}</button><button class="chip-x" data-act="tdel" data-i="${i}" aria-label="Remove ${esc(t)}">×</button></span>`).join("")}</div>
+      <div class="row"><input type="text" id="t-new" placeholder="Add a topic, e.g. coral reefs" style="flex:1;min-width:160px"><button class="btn small" data-act="tadd">Add topic</button></div>
+      <div><label class="lbl" for="t-about">About you (used to make you the main character)</label>
+        <input type="text" id="t-about" value="${esc(P.about)}" placeholder="e.g. I live in Tel Aviv, love hiking and cook vegan food"></div>
+      <div class="seg" role="group" aria-label="Sentence style">
+        <button data-act="story" data-v="1" aria-pressed="${P.story}">Mini story</button>
+        <button data-act="story" data-v="0" aria-pressed="${!P.story}">Separate scenes</button></div>
+    </div>
+  </details>`;
 }
 
 /* ---------- listening ---------- */
@@ -548,6 +608,7 @@ function viewListen() {
           <div><label class="lbl">Focus on</label><div class="seg" role="group">
             ${[["due", "Due words"], ["weak", "Weakest"], ["mix", "Random"]].map(([v, l]) => `<button data-act="lfocus" data-v="${v}" aria-pressed="${L.focus === v}">${l}</button>`).join("")}</div></div>
         </div>
+        ${viewInterests()}
         <div class="row">
           <button class="btn primary" data-act="lstart" ${L.busy || !S.sample ? "disabled" : ""}>${L.busy ? "Writing sentences…" : done ? "New round" : "Start a round of 6"}</button>
         </div>
@@ -575,7 +636,7 @@ function viewListen() {
         <label class="lbl" for="l-answer">What does it mean in English?</label>
         <div class="answer-box">
           <textarea id="l-answer" placeholder="Type your translation${S.dict ? ", or tap the mic and say it" : ""}" ${r ? "readonly" : ""}>${esc(it.answer)}</textarea>
-          ${S.dict && !r ? `<button class="mic small-mic ${live ? "live" : ""}" data-act="lmic" aria-label="${live ? "Stop listening" : "Say your answer"}">${live ? STOP_ICON : MIC_ICON}</button>` : ""}
+          ${!r ? `<button class="mic small-mic ${S.dict ? "" : "off"} ${live ? "live" : ""}" data-act="lmic" aria-label="${live ? "Stop listening" : "Say your answer"}">${live ? STOP_ICON : MIC_ICON}</button>` : ""}
         </div>
         <div class="partial" id="l-partial">${live ? esc(S.listenPartial || "Listening… say your answer, then tap stop.") : ""}</div>
       </div>
@@ -703,11 +764,9 @@ function viewWords() {
 function viewVoice() {
   const v = S.voice; const live = S.dictTarget === "voice" && S.dictState !== "idle";
   const canMic = !!S.dict;
-  const micBtn = canMic
-    ? `<button class="mic ${live ? "live" : ""}" data-act="mic" aria-label="${live ? "Stop listening" : "Start speaking"}">${live ? STOP_ICON : MIC_ICON}</button>`
-    : "";
+  const micBtn = `<button class="mic ${live ? "live" : ""} ${canMic ? "" : "off"}" data-act="mic" aria-label="${live ? "Stop listening" : "Speak your words"}">${live ? STOP_ICON : MIC_ICON}</button>`;
   const headline = !canMic
-    ? `<b>Type your words the way you'd say them</b><span class="note">Voice input works in Chrome or Edge, or the main window of the Claude desktop app. You can type the same way here.</span>`
+    ? `<b>Speak or type new words</b><span class="note">Say them any way you like: "kelev means dog", or "the word for apple". ${IS_PHONE ? "On your phone, tap the box below and use the mic key on your keyboard." : "Tap the mic to start."}</span>`
     : live
       ? `<b>${S.dictState === "starting" ? "Getting the mic ready…" : S.dictState === "finishing" ? "Finishing up…" : "Listening. Say your words, then tap stop."}</b><span class="note">e.g. "kelev means dog, chatul means cat, add the word for apple"</span>`
       : `<b>Speak or type new words</b><span class="note">Say them any way you like: "kelev means dog", "lirkod, to dance", or just "the word for apple". Claude turns it into proper Hebrew entries.</span>`;
@@ -776,8 +835,18 @@ function setupDictation(d) {
   });
 }
 
+const IS_PHONE = /iPhone|iPad|Android|Mobile/i.test(navigator.userAgent || "");
 function micClick(target) {
-  const d = S.dict; if (!d) return;
+  const d = S.dict;
+  if (!d) {
+    const m = IS_PHONE
+      ? "The page's own mic doesn't work in the phone app or mobile browsers. Tap the text box, then tap the mic key on your keyboard to speak. Claude reads it the same way."
+      : "Voice input isn't available in this browser. Open this page in Chrome or Edge, or in the main window of the Claude desktop app. Or use your computer's dictation (Mac: press Fn twice; Windows: Win + H) in the box below.";
+    if (target === "listen") S.listen.error = m; else S.voice.error = m;
+    render();
+    const box = $(target === "listen" ? "#l-answer" : "#v-text"); box?.focus();
+    return;
+  }
   if (d.active()) { const same = S.dictTarget === target; d.stop().catch(() => {}); if (same) return; }
   S.dictTarget = target;
   const heMode = target === "voice" && S.voice.lang === "he";
@@ -914,6 +983,11 @@ document.addEventListener("click", (e) => {
     case "choose": choose(+el.dataset.i, v); break;
     case "mic": micClick("voice"); break;
     case "lmic": micClick("listen"); break;
+    case "hmic": S.tab = "words"; S.session = null; micClick("voice"); render(); window.scrollTo(0, 0); break;
+    case "ttoggle": { const t = S.prefs.topics[+el.dataset.i]; S.prefs.off = S.prefs.off.includes(t) ? S.prefs.off.filter(x => x !== t) : S.prefs.off.concat(t); S.openInterests = true; savePrefs(); render(); break; }
+    case "tdel": { const t = S.prefs.topics[+el.dataset.i]; S.prefs.topics = S.prefs.topics.filter(x => x !== t); S.prefs.off = S.prefs.off.filter(x => x !== t); S.openInterests = true; savePrefs(); render(); break; }
+    case "tadd": { const inp = $("#t-new"); const t = (inp?.value || "").trim(); if (t && !S.prefs.topics.includes(t)) { S.prefs.topics = S.prefs.topics.concat(t); savePrefs(); } if (inp) inp.value = ""; S.openInterests = true; render(); break; }
+    case "story": S.prefs.story = v === "1"; S.openInterests = true; savePrefs(); render(); break;
     case "lfocus": S.listen.focus = v; render(); break;
     case "lstart": startListening().then(() => { if (S.listen.items.length) playCurrent(1); }); break;
     case "lplay": playCurrent(+el.dataset.r || 1); break;
@@ -949,11 +1023,14 @@ document.addEventListener("submit", (e) => {
   ["f-he", "f-en", "f-tr", "f-pos", "f-note"].forEach(id => { const el = $("#" + id); if (el) el.value = ""; });
   addWords([w]).then(r => { render(); const m = $("#addMsg"); if (m) m.textContent = r.added ? `Added ${w.he}.` : `${w.he} is already in your list.`; $("#f-he")?.focus(); });
 });
+document.addEventListener("toggle", (e) => { if (e.target.classList?.contains("interests")) S.openInterests = e.target.open; }, true);
+document.addEventListener("keydown", (e) => { if (e.target.id === "t-new" && e.key === "Enter") { e.preventDefault(); $('[data-act="tadd"]')?.click(); } });
 document.addEventListener("change", (e) => {
   const i = e.target.dataset?.vi; if (i == null) return;
   const it = S.voice.items[+i]; if (it) { it.on = e.target.checked; render(); }
 });
 document.addEventListener("input", (e) => {
+  if (e.target.id === "t-about") { S.prefs.about = e.target.value; savePrefs(); return; }
   if (e.target.id === "l-answer") {
     const it = S.listen.items[S.listen.i]; if (!it) return;
     const had = !!it.answer.trim(); it.answer = e.target.value;
