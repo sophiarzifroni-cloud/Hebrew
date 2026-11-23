@@ -185,6 +185,25 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
 .scan label.btn.disabled { opacity: .5; pointer-events: none; }
 .scan label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Verbs */
+.picker { display: flex; flex-direction: column; gap: 10px; }
+.pgroup { display: flex; flex-direction: column; gap: 6px; margin-top: 12px; }
+.btype { display: flex; flex-direction: column; gap: 12px; }
+.btype h2 .he { font-size: 26px; color: var(--accent); margin-left: 6px; }
+.ttable { overflow-x: auto; }
+.ttable table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+.gzhead { display: flex; flex-direction: column; gap: 4px; background: var(--bg); border-radius: 8px; padding: 10px; margin-top: 4px; }
+.gzhead .he { font-size: 16px; }
+.ttable th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); font-weight: 500; padding: 4px 6px; white-space: nowrap; }
+.ttable td { padding: 6px 4px; border-top: 1px solid var(--line); vertical-align: top; overflow-wrap: anywhere; }
+.ttable td .he { font-size: 19px; display: block; }
+.ttable td .tr { color: var(--muted); font-style: italic; font-size: 12px; display: block; }
+.ttable th { white-space: normal; }
+@media (max-width: 480px) { .btype.panel { padding: 12px 10px; } .ttable td .he { font-size: 17px; } }
+.ttable td .en { font-size: 12px; color: var(--muted); }
+.ttable tr.pat td { background: var(--accent-soft); }
+.ttable tr.pat .he { color: var(--accent); }
+.ttable tr.gz td { background: var(--bg); padding-block: 10px; }
+.ttable input[type=checkbox] { width: 18px; height: 18px; margin-top: 4px; }
 .ctable h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
 .ctable-scroll { overflow-x: auto; }
 .ctable table { width: 100%; border-collapse: collapse; }
@@ -257,7 +276,7 @@ const S = {
   webVoice: null, heWarn: false, lastTitle: "", vowelPending: new Set(), vowelErr: "",
   nikud: true,
   conj: {}, conjPending: new Set(), conjErr: "",
-  verb: { pick: "all", mode: "table", tenses: new Set(["present", "past", "future"]), num: "all", gen: "all", dir: "make", session: null, quiz: null, sent: { items: [], busy: false, error: "", mode: "read", title: "" } },
+  verb: { selAll: true, sel: new Set(), openPicker: false, mode: "types", tenses: new Set(["present", "past", "future"]), num: "all", gen: "all", dir: "make", session: null, quiz: null, sent: { items: [], busy: false, error: "", mode: "read", title: "" } },
   prefs: { topics: [], off: [], about: "", story: true }, prefsDoc: false,
   listen: { items: [], i: 0, focus: "due", busy: false, checking: false, error: "", right: 0, close: 0 },
   voice: { text: "", partial: "", state: "idle", lang: "en", busy: false, items: [], error: "", msg: "" },
@@ -296,6 +315,7 @@ function clean(w) { const o = { ...w }; delete o.id; return o; }
 function saveLocal() { ls.set("kesher-words", S.words); render(); }
 
 async function boot() {
+  const vs = ls.get("kesher-verbsel"); if (vs && typeof vs.all === "boolean") { S.verb.selAll = vs.all; S.verb.sel = new Set(Array.isArray(vs.ids) ? vs.ids : []); }
   const nk = ls.get("kesher-nikud"); if (typeof nk === "boolean") S.nikud = nk;
   const pref = ls.get("kesher-prefs"); if (pref?.dir) S.dir = pref.dir; if (pref?.level) S.sent.level = pref.level;
   render();
@@ -651,11 +671,12 @@ let conjTimer = null; const conjTries = new Map();
 function sweepConj() {
   clearTimeout(conjTimer);
   conjTimer = setTimeout(() => {
-    if (!S.sample || !S.conjLoaded || S.conjPending.size) return;
-    const w = verbList().find(v => !conjFor(v) && (conjTries.get(v.id) || 0) < 2);
+    if (!S.sample || !S.conjLoaded || S.conjPending.size >= 2) return; // two at a time
+    const w = verbList().find(v => !conjFor(v) && !S.conjPending.has(v.id) && (conjTries.get(v.id) || 0) < 2);
     if (!w) return;
     conjTries.set(w.id, (conjTries.get(w.id) || 0) + 1);
     genConj(w);
+    sweepConj(); // fill the second slot
   }, 900);
 }
 async function genConj(w) {
@@ -678,8 +699,12 @@ For each form:
 - "en": short English, e.g. "I visited", "you (f.) will visit", "they (f.) visit", "Visit! (to a woman)"
 - "note": "" unless something is worth knowing
 
+Also classify the verb:
+- "binyan": one of pa'al, nif'al, pi'el, pu'al, hif'il, huf'al, hitpa'el
+- "gizra": the root type that most changes how this verb conjugates, one of: regular, pe-guttural (first root letter א/ה/ח/ע, or ר in nif'al), ayin-guttural (middle root letter א/ה/ח/ע), lamed-guttural (last root letter ח/ע), lamed-he (ends in ה), lamed-alef (ends in א), pe-nun (first letter נ that drops), pe-yod (first letter י), ayin-vav (hollow, middle ו/י), doubled (2nd and 3rd letters the same), four-letter, sibilant (hitpa'el with ס/שׁ/שׂ/צ/ז first, where the ת swaps)
+
 If the word is not actually a verb, reply {"notVerb": true}.
-Reply with only JSON: {"infinitive":"לְבַקֵּר","root":"ב-ק-ר","binyan":"pi'el","forms":[{"tense":"present","p":"אֲנִי / אַתָּה / הוּא","g":"m","n":"s","he":"מְבַקֵּר","tr":"mevaker","en":"I / you (m.) / he visit(s)","note":""}]}`;
+Reply with only JSON: {"infinitive":"לְבַקֵּר","root":"ב-ק-ר","binyan":"pi'el","gizra":"regular","forms":[{"tense":"present","p":"אֲנִי / אַתָּה / הוּא","g":"m","n":"s","he":"מְבַקֵּר","tr":"mevaker","en":"I / you (m.) / he visit(s)","note":""}]}`;
   try {
     const out = await S.sample.json(prompt, { cache: false });
     if (out?.notVerb) { if (!w.pos) store.patch(w.id, { pos: "other" }).catch(() => {}); return; }
@@ -688,7 +713,7 @@ Reply with only JSON: {"infinitive":"לְבַקֵּר","root":"ב-ק-ר","binyan
       he: String(f.he), tr: String(f.tr || ""), en: String(f.en || ""), note: String(f.note || ""),
     }));
     if (forms.length < 20) throw { code: "short" };
-    const doc = { src: strip(w.he).trim(), infinitive: String(out.infinitive || w.he), root: String(out.root || ""), binyan: String(out.binyan || ""), forms, made: now() };
+    const doc = { src: strip(w.he).trim(), infinitive: String(out.infinitive || w.he), root: String(out.root || ""), binyan: String(out.binyan || ""), gizra: GIZRA_KEYS.includes(out.gizra) ? out.gizra : "other", forms, made: now() };
     if (S.mode === "db") await S.db.collection("conj").doc(w.id).set(doc);
     else { S.conj[w.id] = doc; ls.set("kesher-conj", S.conj); }
   } catch (e) {
@@ -699,7 +724,7 @@ Reply with only JSON: {"infinitive":"לְבַקֵּר","root":"ב-ק-ר","binyan
 // Every form of the chosen verb(s) that passes the filters
 function verbForms() {
   const V = S.verb;
-  const verbs = V.pick === "all" ? verbList() : verbList().filter(w => w.id === V.pick);
+  const verbs = selectedVerbs();
   const out = [];
   for (const w of verbs) {
     const c = conjFor(w); if (!c) continue;
@@ -717,30 +742,143 @@ const whoLabel = (f) => f.tense === "present" || f.tense === "imperative"
   ? `${f.n === "s" ? "singular" : "plural"}${f.g ? ", " + (f.g === "m" ? "masculine" : "feminine") : ""}`
   : "";
 
+/* ---------- verb types: binyan + root type ---------- */
+// The pattern letters פ-ע-ל stand for the three root letters
+const BINYANIM = [
+  { key: "paal", name: "Pa'al", he: "פָּעַל", aka: "also called Kal", desc: "The basic, most common pattern: everyday actions like to write, to eat, to go.", pat: { inf: "לִפְעֹל", past: "פָּעַל", pres: "פּוֹעֵל", fut: "יִפְעֹל" } },
+  { key: "nifal", name: "Nif'al", he: "נִפְעַל", desc: "Often the passive or 'happens to you' side of pa'al: to be written, to get hurt, to remember. Watch for the doubled middle letter in the future and infinitive.", pat: { inf: "לְהִפָּעֵל", past: "נִפְעַל", pres: "נִפְעָל", fut: "יִפָּעֵל" } },
+  { key: "piel", name: "Pi'el", he: "פִּעֵל", desc: "Active, often more intense actions. The middle root letter is doubled (dagesh): to visit, to fix, to try.", pat: { inf: "לְפַעֵל", past: "פִּעֵל", pres: "מְפַעֵל", fut: "יְפַעֵל" } },
+  { key: "pual", name: "Pu'al", he: "פֻּעַל", desc: "The passive of pi'el. It has no infinitive.", pat: { inf: "—", past: "פֻּעַל", pres: "מְפֻעָל", fut: "יְפֻעַל" } },
+  { key: "hifil", name: "Hif'il", he: "הִפְעִיל", desc: "Often causing something to happen: to recommend, to rent out, to influence. Look for the long 'i' (י) in most forms.", pat: { inf: "לְהַפְעִיל", past: "הִפְעִיל", pres: "מַפְעִיל", fut: "יַפְעִיל" } },
+  { key: "hufal", name: "Huf'al", he: "הֻפְעַל", desc: "The passive of hif'il. It has no infinitive.", pat: { inf: "—", past: "הֻפְעַל", pres: "מֻפְעָל", fut: "יֻפְעַל" } },
+  { key: "hitpael", name: "Hitpa'el", he: "הִתְפַּעֵל", desc: "Often reflexive or done to yourself: to get organized, to hide, to make an effort. Starts with הִתְ / מִתְ.", pat: { inf: "לְהִתְפַּעֵל", past: "הִתְפַּעֵל", pres: "מִתְפַּעֵל", fut: "יִתְפַּעֵל" } },
+  { key: "pending", name: "Still being built", he: "", desc: "Claude is building these conjugation tables now, two at a time. Keep the page open and each verb moves into its group when it's ready.", pat: null },
+  { key: "other", name: "Not sorted yet", he: "", desc: "Verbs whose pattern hasn't been worked out yet.", pat: null },
+];
+const GIZRA = [
+  ["regular", "Regular", "שְׁלֵמִים", "All three root letters stay put in every form. This is the pattern exactly as shown above."],
+  ["pe-guttural", "First letter guttural", "פ׳ גְּרוֹנִית", "The first root letter is א, ה, ח or ע (or ר in nif'al). It can't take a silent sheva, so it gets an 'a' or 'e' sound: לַעֲמֹד, יַעֲמֹד. In nif'al the vowel before it lengthens instead of doubling: לְהֵרָגַע."],
+  ["ayin-guttural", "Middle letter guttural", "ע׳ גְּרוֹנִית", "The middle root letter is א, ה, ח or ע. Vowels shift around it in some forms: צָחֲקוּ, יִצְחֲקוּ, נִבְהֲלוּ."],
+  ["lamed-guttural", "Ends in ח or ע", "ל׳ גְּרוֹנִית", "The last root letter is ח or ע, which pulls in an 'a' sound: לִשְׂמֹחַ, יִשְׂמַח, שׂוֹמֵחַ."],
+  ["lamed-he", "Ends in ה", "ל״ה / ל״י", "The final ה turns into ת, ו or י in many forms: לִבְנוֹת, בָּנָה, בָּנִיתִי, בּוֹנֶה, יִבְנֶה."],
+  ["lamed-alef", "Ends in א", "ל״א", "The final א goes silent and changes the vowel before it: לִמְצֹא, מָצָא, מוֹצֵא, יִמְצָא."],
+  ["pe-nun", "First letter נ", "פ״נ", "The נ often drops out and doubles the next letter: לְהַצִּיל, מַצִּיל, יַצִּיל; לִנְסֹעַ, יִסַּע."],
+  ["pe-yod", "First letter י", "פ״י", "The י often vanishes or turns into ו: לָשֶׁבֶת, יָשַׁב, יוֹשֵׁב, יֵשֵׁב."],
+  ["ayin-vav", "Hollow: middle ו or י", "ע״ו / ע״י", "The middle letter mostly disappears: לָרוּץ, רָץ, רָץ, יָרוּץ."],
+  ["doubled", "Doubled", "כְּפוּלִים", "The second and third root letters are the same: לָסֹב, סָבַב."],
+  ["four-letter", "Four-letter root", "מְרֻבָּעִים", "Four root letters, found in pi'el, pu'al and hitpa'el: לְתַרְגֵּם, לְהִתְאַרְגֵּן."],
+  ["sibilant", "Swap: starts with ס שׁ שׂ צ ז", "שִׂיכּוּל", "In hitpa'el the ת swaps places with the first root letter: לְהִשְׁתַּדֵּל (not לְהִתְשַׁדֵּל), לְהִצְטַלֵּם."],
+  ["other", "Other", "", ""],
+];
+const GIZRA_KEYS = GIZRA.map(g => g[0]);
+function normBinyan(s) {
+  const t = String(s || "").toLowerCase().replace(/[^a-z]/g, "");
+  if (t.startsWith("hitp")) return "hitpael";
+  if (t.startsWith("huf") || t.startsWith("hof")) return "hufal";
+  if (t.startsWith("hif")) return "hifil";
+  if (t.startsWith("pu")) return "pual";
+  if (t.startsWith("pi")) return "piel";
+  if (t.startsWith("nif")) return "nifal";
+  if (t.startsWith("pa") || t.startsWith("qal") || t.startsWith("kal")) return "paal";
+  return "other";
+}
+function verbType(w) {
+  const c = conjFor(w); if (!c) return { b: "pending", g: "other" };
+  const g = GIZRA_KEYS.includes(c.gizra) ? c.gizra : "other";
+  return { b: normBinyan(c.binyan), g };
+}
+// The forms shown side by side in the pattern view
+function keyForms(c) {
+  const fs = c.forms || [];
+  const he3 = (t) => fs.find(f => f.tense === t && strip(f.p).trim() === "הוא");
+  return { inf: c.infinitive, past: he3("past"), pres: fs.find(f => f.tense === "present" && f.g === "m" && f.n === "s"), fut: he3("future") };
+}
+
+/* which verbs are being practised */
+function selectedVerbs() { const V = S.verb; return verbList().filter(w => V.selAll || V.sel.has(w.id)); }
+function saveVerbSel() { ls.set("kesher-verbsel", { all: S.verb.selAll, ids: [...S.verb.sel] }); }
+function setSel(ids, on) {
+  const V = S.verb;
+  if (V.selAll) { V.sel = new Set(verbList().map(w => w.id)); V.selAll = false; }
+  ids.forEach(id => on ? V.sel.add(id) : V.sel.delete(id));
+  if (verbList().every(w => V.sel.has(w.id))) { V.selAll = true; V.sel.clear(); }
+  V.session = null; V.quiz = null; saveVerbSel();
+}
+const isSel = (id) => S.verb.selAll || S.verb.sel.has(id);
+function groupIds(b, g) { return verbList().filter(w => { const t = verbType(w); return t.b === b && (!g || t.g === g); }).map(w => w.id); }
+
+function verbPicker() {
+  const verbs = verbList(); const n = selectedVerbs().length;
+  const groups = BINYANIM.map(B => ({ B, list: verbs.filter(w => verbType(w).b === B.key) })).filter(x => x.list.length);
+  return `<div class="picker">
+    <div class="row" style="justify-content:space-between">
+      <b>Practising ${n === verbs.length ? `all ${n} verbs` : `${n} of ${verbs.length} verbs`}</b>
+      <div class="row" style="gap:6px"><button class="btn small" data-act="vselall">All</button><button class="btn small" data-act="vselnone">None</button></div>
+    </div>
+    <details class="vchoose" ${S.verb.openPicker ? "open" : ""}><summary>Choose verbs</summary>
+      ${groups.map(({ B, list }) => {
+        const all = list.every(w => isSel(w.id));
+        return `<div class="pgroup"><div class="row" style="justify-content:space-between"><span class="lbl" style="margin:0">${esc(B.name)} ${B.he ? `<span class="he" lang="he">${B.he}</span>` : ""} · ${list.length}</span>
+          <button class="btn small" data-act="vselgroup" data-b="${B.key}">${all ? "Unselect group" : "Select group"}</button></div>
+          <div class="chips">${list.map(w => `<button class="chip" data-act="vsel" data-id="${w.id}" aria-pressed="${isSel(w.id)}"><span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span>${S.conjPending.has(w.id) ? `<span class="note">building…</span>` : !conjFor(w) ? `<span class="note">waiting</span>` : ""}</button>`).join("")}</div></div>`;
+      }).join("")}
+    </details>
+    ${n ? "" : `<p class="note" style="margin:0">Pick at least one verb to practise.</p>`}
+  </div>`;
+}
+
+function verbTypes() {
+  const verbs = verbList();
+  const groups = BINYANIM.map(B => ({ B, list: verbs.filter(w => verbType(w).b === B.key) })).filter(x => x.list.length);
+  const cell = (f) => f ? `<span class="he" lang="he">${esc(typeof f === "string" ? f : f.he)}</span>${typeof f === "string" ? "" : `<span class="tr">${esc(f.tr)}</span>`}` : "—";
+  return `<p class="note" style="margin:0">Each verb type (binyan) has its own pattern. פ-ע-ל stand in for the three root letters, so you can see the same shape repeat in your verbs. Tick verbs or whole groups to practise them.</p>` +
+  groups.map(({ B, list }) => {
+    const allSel = list.every(w => isSel(w.id));
+    const subs = GIZRA.map(([g, name, heName, desc]) => ({ g, name, heName, desc, list: list.filter(w => verbType(w).g === g) })).filter(x => x.list.length);
+    const cols = `<colgroup><col style="width:9%"><col style="width:25%"><col style="width:22%"><col style="width:22%"><col style="width:22%"></colgroup>`;
+    const pat = B.pat ? `<div class="ttable"><table>${cols}
+        <thead><tr><th></th><th>Infinitive</th><th>Past · he</th><th>Present · m.</th><th>Future · he</th></tr></thead>
+        <tbody><tr class="pat"><td></td><td>${cell(B.pat.inf)}<div class="note">Pattern</div></td><td>${cell(B.pat.past)}</td><td>${cell(B.pat.pres)}</td><td>${cell(B.pat.fut)}</td></tr></tbody></table></div>` : "";
+    const body = subs.map(sg => {
+      const sAll = sg.list.every(w => isSel(w.id));
+      return `<div class="gzhead"><div class="row" style="justify-content:space-between;gap:8px"><span><b>${esc(sg.name)}</b> ${sg.heName ? `<span class="he" lang="he">${sg.heName}</span>` : ""} <span class="note">· ${sg.list.length}</span></span>
+          <button class="btn small" data-act="vselgroup" data-b="${B.key}" data-g="${sg.g}">${sAll ? "Unselect" : "Select"} these</button></div>
+          ${sg.desc ? `<div class="note">${esc(sg.desc)}</div>` : ""}</div>
+        <div class="ttable"><table>${cols}<tbody>` +
+        sg.list.map(w => { const c = conjFor(w); const k = c ? keyForms(c) : {};
+          return `<tr><td><input type="checkbox" data-act="vsel" data-id="${w.id}" ${isSel(w.id) ? "checked" : ""} aria-label="Practise ${esc(w.en)}"></td>
+            <td>${cell(k.inf || w.he)}<div class="en">${esc(w.en)}</div></td><td>${cell(k.past)}</td><td>${cell(k.pres)}</td><td>${cell(k.fut)}</td></tr>`; }).join("") + `</tbody></table></div>`;
+    }).join("");
+    return `<section class="panel btype">
+      <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+        <div><h2>${esc(B.name)} ${B.he ? `<span class="he" lang="he">${B.he}</span>` : ""}</h2><p class="sub" style="margin-top:2px">${esc(B.desc)}${B.aka ? ` (${B.aka})` : ""}</p></div>
+        <button class="btn small" data-act="vselgroup" data-b="${B.key}">${allSel ? "Unselect all" : "Select all"} ${list.length}</button></div>
+      ${pat}${body}
+    </section>`;
+  }).join("");
+}
+
 function viewVerbs() {
   const verbs = verbList(); const V = S.verb;
   const intro = `<div><h2>Verbs</h2><p class="sub">Every verb in your list gets a full conjugation table. Practise who did what, and when: singular and plural, masculine and feminine, past, present, future and commands.</p></div>`;
   if (!verbs.length) return intro + `<div class="panel empty"><span class="he" lang="he">אֵין פְּעָלִים עֲדַיִן</span>No verbs yet. Add one in My words, like "levaker, to visit". Anything marked as a verb, or with a meaning that starts with "to", shows up here.</div>`;
-  if (V.pick !== "all" && !verbs.some(w => w.id === V.pick)) V.pick = "all";
-  const chips = `<div class="chips">
-      <button class="chip" data-act="vpick" data-id="all" aria-pressed="${V.pick === "all"}">All verbs (${verbs.length})</button>
-      ${verbs.map(w => `<button class="chip" data-act="vpick" data-id="${w.id}" aria-pressed="${V.pick === w.id}"><span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span>${S.conjPending.has(w.id) ? `<span class="note">building…</span>` : !conjFor(w) ? `<span class="note">waiting</span>` : ""}</button>`).join("")}
-    </div>`;
+  const chips = verbPicker();
   const modes = `<div class="seg" role="group" aria-label="Practice type">
-      ${[["table", "Table"], ["cards", "Flashcards"], ["quiz", "Pick the form"], ["sent", "Sentences"]].map(([v, l]) => `<button data-act="vmode" data-v="${v}" aria-pressed="${V.mode === v}">${l}</button>`).join("")}</div>`;
-  const filters = V.mode === "table" ? "" : `<div class="row" style="gap:14px">
+      ${[["types", "Types"], ["table", "Table"], ["cards", "Cards"], ["quiz", "Quiz"], ["sent", "Sentences"]].map(([v, l]) => `<button data-act="vmode" data-v="${v}" aria-pressed="${V.mode === v}">${l}</button>`).join("")}</div>`;
+  const filters = V.mode === "table" || V.mode === "types" ? "" : `<div class="row" style="gap:14px">
       <div><label class="lbl">Tenses</label><div class="seg" role="group">${TENSES.map(([v, l]) => `<button data-act="vtense" data-v="${v}" aria-pressed="${V.tenses.has(v)}">${l}</button>`).join("")}</div></div>
       <div><label class="lbl">Number</label><div class="seg" role="group">${[["all", "Both"], ["s", "Singular"], ["p", "Plural"]].map(([v, l]) => `<button data-act="vnum" data-v="${v}" aria-pressed="${V.num === v}">${l}</button>`).join("")}</div></div>
       <div><label class="lbl">Gender</label><div class="seg" role="group">${[["all", "Both"], ["m", "Masc."], ["f", "Fem."]].map(([v, l]) => `<button data-act="vgen" data-v="${v}" aria-pressed="${V.gen === v}">${l}</button>`).join("")}</div></div>
     </div>`;
   const err = S.conjErr ? `<div class="banner">${esc(S.conjErr)}</div>` : "";
-  const body = V.mode === "table" ? verbTables() : V.mode === "cards" ? verbCards() : V.mode === "quiz" ? verbQuiz() : verbSentences();
+  const body = V.mode === "types" ? verbTypes() : V.mode === "table" ? verbTables() : V.mode === "cards" ? verbCards() : V.mode === "quiz" ? verbQuiz() : verbSentences();
   return `${intro}<div class="panel" style="display:flex;flex-direction:column;gap:14px">${chips}${modes}${filters}${err}</div>${body}`;
 }
 
 function verbTables() {
   const V = S.verb;
-  const verbs = (V.pick === "all" ? verbList() : verbList().filter(w => w.id === V.pick));
+  const verbs = selectedVerbs();
+  if (!verbs.length) return `<div class="panel empty">Pick at least one verb above.</div>`;
   return verbs.map(w => {
     const c = conjFor(w);
     if (!c) return `<div class="panel"><h2 class="he" lang="he">${esc(w.he)}</h2><p class="note">${S.conjPending.has(w.id) ? "Building the conjugation table…" : S.sample ? "Table coming up shortly." : "Tables are built by Claude, which works when you open this page on claude.ai."}</p></div>`;
@@ -842,7 +980,7 @@ function verbSentences() {
   const V = S.verb; const t = V.sent; const forms = verbForms();
   if (!forms.length && !t.items.length) return noForms();
   const controls = `<div class="panel" style="display:flex;flex-direction:column;gap:12px">
-      <p style="margin:0">Claude writes sentences about your interests, each using a different form of ${V.pick === "all" ? "your verbs" : "this verb"}, mixing singular and plural, masculine and feminine.</p>
+      <p style="margin:0">Claude writes sentences about your interests, each using a different form of ${selectedVerbs().length === 1 ? "this verb" : "the verbs you picked"}, mixing singular and plural, masculine and feminine.</p>
       <div class="row"><button class="btn primary" data-act="vsgen" ${t.busy || !S.sample || !forms.length ? "disabled" : ""}>${t.busy ? "Writing sentences…" : t.items.length ? "Write new sentences" : "Write 8 sentences"}</button></div>
       ${!S.sample ? `<p class="note">Sentence writing uses Claude, which works when you open this page on claude.ai.</p>` : ""}
       ${t.error ? `<div class="banner">${esc(t.error)}</div>` : ""}</div>`;
@@ -923,7 +1061,10 @@ Reply with only JSON: {"title":"${S.prefs.story ? "A short title" : ""}","senten
 function verbClick(a, el, v) {
   const V = S.verb;
   switch (a) {
-    case "vpick": V.pick = el.dataset.id; V.session = null; V.quiz = null; break;
+    case "vsel": setSel([el.dataset.id], !isSel(el.dataset.id)); break;
+    case "vselall": V.selAll = true; V.sel.clear(); V.session = null; V.quiz = null; saveVerbSel(); break;
+    case "vselnone": V.selAll = false; V.sel.clear(); V.session = null; V.quiz = null; saveVerbSel(); break;
+    case "vselgroup": { const ids = groupIds(el.dataset.b, el.dataset.g); setSel(ids, !ids.every(isSel)); break; }
     case "vmode": V.mode = v; V.session = null; V.quiz = null; break;
     case "vtense": { if (V.tenses.has(v)) { if (V.tenses.size > 1) V.tenses.delete(v); } else V.tenses.add(v); V.session = null; V.quiz = null; break; }
     case "vnum": V.num = v; V.session = null; V.quiz = null; break;
@@ -1489,6 +1630,7 @@ document.addEventListener("submit", (e) => {
 });
 document.addEventListener("toggle", (e) => {
   if (e.target.classList?.contains("interests")) S.openInterests = e.target.open;
+  if (e.target.classList?.contains("vchoose")) S.verb.openPicker = e.target.open;
 }, true);
 document.addEventListener("keydown", (e) => { if (e.target.id === "t-new" && e.key === "Enter") { e.preventDefault(); $('[data-act="tadd"]')?.click(); } });
 document.addEventListener("change", (e) => {
