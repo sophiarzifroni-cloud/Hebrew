@@ -178,6 +178,19 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
 .chip-x { border: none; background: none; padding: 4px 10px 4px 4px; color: var(--muted); font-size: 16px; line-height: 1; }
 .story-title { margin: 0 0 4px; font-size: 17px; }
 .topic { align-self: flex-start; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+/* Verbs */
+.ctable h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.ctable-scroll { overflow-x: auto; }
+.ctable table { width: 100%; border-collapse: collapse; }
+.ctable td { padding: 7px 8px; border-top: 1px solid var(--line); vertical-align: middle; }
+.ctable td.pron { font-size: 16px; color: var(--muted); white-space: nowrap; }
+.ctable td.form { font-size: 24px; white-space: nowrap; }
+.ctable td .tr { color: var(--muted); font-style: italic; }
+.ctable td.en { font-size: 14px; width: 100%; }
+@media (max-width: 480px) { .ctable td.pron { font-size: 13px; white-space: normal; } .ctable td.form { font-size: 21px; } .ctable td { padding: 7px 4px; } }
+.quiz { display: flex; flex-direction: column; gap: 14px; align-items: center; text-align: center; }
+.quiz .pos { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.card .pos { font-size: 12px; }
 /* Listening */
 .listen { display: flex; flex-direction: column; gap: 16px; }
 .player { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-block: 8px; }
@@ -214,6 +227,7 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
       <button role="tab" data-tab="cards" aria-selected="true">Flashcards</button>
       <button role="tab" data-tab="sentences" aria-selected="false">Sentences</button>
       <button role="tab" data-tab="listen" aria-selected="false">Listening</button>
+      <button role="tab" data-tab="verbs" aria-selected="false">Verbs</button>
       <button role="tab" data-tab="words" aria-selected="false">My words</button>
     </nav>
   </div>
@@ -236,6 +250,8 @@ const S = {
   dict: null, dictTarget: "voice", dictState: "idle", listenPartial: "",
   webVoice: null, heWarn: false, lastTitle: "", vowelPending: new Set(), vowelErr: "",
   nikud: true,
+  conj: {}, conjPending: new Set(), conjErr: "",
+  verb: { pick: "all", mode: "table", tenses: new Set(["present", "past", "future"]), num: "all", gen: "all", dir: "make", session: null, quiz: null, sent: { items: [], busy: false, error: "", mode: "read", title: "" } },
   prefs: { topics: [], off: [], about: "", story: true }, prefsDoc: false,
   listen: { items: [], i: 0, focus: "due", busy: false, checking: false, error: "", right: 0, close: 0 },
   voice: { text: "", partial: "", state: "idle", lang: "en", busy: false, items: [], error: "", msg: "" },
@@ -282,6 +298,12 @@ async function boot() {
   setupAudio();
   S.prefs.topics = DEFAULT_TOPICS.slice();
   const lp = ls.get("kesher-interests"); if (lp) Object.assign(S.prefs, lp);
+  if (db) db.collection("conj").onSnapshot(snap => {
+    S.conj = Object.fromEntries(snap.docs.map(d => [d.id, d.data()]));
+    if (!snap.metadata.fromCache) S.conjLoaded = true;
+    render(); sweepConj();
+  }, () => {});
+  else { S.conj = ls.get("kesher-conj") || {}; S.conjLoaded = true; sweepConj(); }
   if (db) db.doc("settings/profile").onSnapshot(snap => {
     if (snap.exists) { const d = snap.data(); S.prefsDoc = true; Object.assign(S.prefs, { topics: Array.isArray(d.topics) ? d.topics : S.prefs.topics, off: Array.isArray(d.off) ? d.off : [], about: typeof d.about === "string" ? d.about : "", story: d.story !== false }); render(); }
   }, () => {});
@@ -290,14 +312,14 @@ async function boot() {
     const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
     db.collection("words").onSnapshot(snap => {
       S.words = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      sweepVowels();
+      sweepVowels(); sweepConj();
       if (!snap.metadata.fromCache) { S.loaded = true; S.slow = false; clearTimeout(timer); }
       else if (S.words.length) S.loaded = true;
       render();
     }, err => { clearTimeout(timer); S.loaded = true; S.dbError = err.code; render(); });
   } else {
     S.words = ls.get("kesher-words") || [];
-    S.loaded = true; render(); sweepVowels();
+    S.loaded = true; render(); sweepVowels(); sweepConj();
   }
 }
 
@@ -327,7 +349,7 @@ function renderInner() {
   const m = $("#main");
   if (!S.loaded) { m.innerHTML = `<div class="empty">${S.slow ? "Can't reach your saved words yet. Check your connection." : "Loading your words…"}</div>`; return; }
   const top = S.dbError ? `<div class="banner">Your saved words couldn't load (${esc(S.dbError)}). Reload the page to try again.</div>` : "";
-  m.innerHTML = top + (S.tab === "cards" ? viewCards() : S.tab === "sentences" ? viewSentences() : S.tab === "listen" ? viewListen() : viewWords());
+  m.innerHTML = top + (S.tab === "cards" ? viewCards() : S.tab === "sentences" ? viewSentences() : S.tab === "listen" ? viewListen() : S.tab === "verbs" ? viewVerbs() : viewWords());
 }
 
 function emptyState(msg) {
@@ -511,9 +533,6 @@ async function generate() {
 
 // Asks Claude for 6 sentences built from the learner's words; [brackets] mark their words.
 async function fetchSentences(targets, level, signal) {
-  const picked = S.prefs.topics.filter(t => !S.prefs.off.includes(t));
-  const topics = (picked.length ? shuffle(picked) : DEFAULT_TOPICS).join(", ");
-  const about = S.prefs.about.trim() || "an adult learner who loves animals, nature and travel, and eats vegan.";
   const vocab = S.words.map(w => `${w.he} = ${w.en}${w.pos ? ` (${w.pos})` : ""}`).join("\n");
   const focus = targets.map(w => `${w.he} = ${w.en}`).join("\n");
   const levelText = {
@@ -531,14 +550,7 @@ ${focus}
 
 Write 6 sentences. ${levelText}
 
-MAKE THEM MEMORABLE. Use these techniques from memory research:
-- Self-reference: the learner is the main character. Write in first person ("I", "we") or address them as "you". About the learner: ${about}
-- Personal interest: set the sentences in these topics, a different one per sentence where possible: ${topics}.
-- Vivid and concrete: things you can picture, hear, smell or taste. Name specific places (a real trail, country or city), specific plant-based dishes, specific animals, colors and sounds. Make the learner's words act on each other inside one scene (the dog steals the hummus), not just sit side by side. Avoid flat, abstract or textbook lines like "The man has a book."
-- Emotion and humor: give most sentences a feeling, a small surprise or a gentle joke. Make 1 or 2 of the 6 playful or a bit absurd; odd images stand out most when mixed in with normal ones.
-- ${S.prefs.story ? "Story: link the 6 sentences into one short story in order, with a beginning, a small problem and a happy ending. Give it a short English title." : "Distinct scenes: each sentence stands alone in a clearly different setting."}
-- Values: food is always vegan; animals are respected and never eaten, hunted or harmed.
-- Correctness and the level above always come first. Never make a sentence harder just to make it fun.
+${memoryRules(6)}
 
 Rules:
 - Build sentences mostly from the learner's vocabulary. You may add very common basic words (pronouns, את, של, ב-, ל-, ה-, זה, יש, אין, גם, מאוד, ו-) and a few simple everyday words when needed.
@@ -595,6 +607,331 @@ function viewInterests() {
         <button data-act="story" data-v="0" aria-pressed="${!P.story}">Separate scenes</button></div>
     </div>
   </details>`;
+}
+
+/* ---------- verbs: conjugation tables and practice ---------- */
+const TENSES = [["present", "Present"], ["past", "Past"], ["future", "Future"], ["imperative", "Command"]];
+const TENSE_LABEL = Object.fromEntries(TENSES);
+const isVerb = (w) => w && (String(w.pos || "").toLowerCase() === "verb" || /^to\s/i.test(String(w.en || "").trim()));
+const verbList = () => S.words.filter(isVerb).sort((a, b) => (a.added ?? 0) - (b.added ?? 0));
+// A table belongs to the word as spelled when it was made; a spelling change makes a new one
+const conjFor = (w) => { const c = S.conj[w.id]; return c && Array.isArray(c.forms) && c.src === strip(w.he).trim() ? c : null; };
+
+// Same memory rules as the main sentences, shared by every sentence prompt
+function memoryRules(n) {
+  const picked = S.prefs.topics.filter(t => !S.prefs.off.includes(t));
+  const topics = (picked.length ? shuffle(picked) : DEFAULT_TOPICS).join(", ");
+  const about = S.prefs.about.trim() || "an adult learner who loves animals, nature and travel, and eats vegan.";
+  return `MAKE THEM MEMORABLE. Use these techniques from memory research:
+- Self-reference: the learner is the main character. Write in first person ("I", "we") or address them as "you". About the learner: ${about}
+- Personal interest: set the sentences in these topics, a different one per sentence where possible: ${topics}.
+- Vivid and concrete: things you can picture, hear, smell or taste. Name specific places (a real trail, country or city), specific plant-based dishes, specific animals, colors and sounds. Make the learner's words act on each other inside one scene (the dog steals the hummus), not just sit side by side. Avoid flat, abstract or textbook lines like "The man has a book."
+- Emotion and humor: give most sentences a feeling, a small surprise or a gentle joke. Make 1 or 2 of the ${n} playful or a bit absurd; odd images stand out most when mixed in with normal ones.
+- ${S.prefs.story ? `Story: link the ${n} sentences into one short story in order, with a beginning, a small problem and a happy ending. Give it a short English title.` : "Distinct scenes: each sentence stands alone in a clearly different setting."}
+- Values: food is always vegan; animals are respected and never eaten, hunted or harmed.
+- Correctness and the level always come first. Never make a sentence harder just to make it fun.`;
+}
+
+let conjTimer = null; const conjTries = new Map();
+function sweepConj() {
+  clearTimeout(conjTimer);
+  conjTimer = setTimeout(() => {
+    if (!S.sample || !S.conjLoaded || S.conjPending.size) return;
+    const w = verbList().find(v => !conjFor(v) && (conjTries.get(v.id) || 0) < 2);
+    if (!w) return;
+    conjTries.set(w.id, (conjTries.get(w.id) || 0) + 1);
+    genConj(w);
+  }, 900);
+}
+async function genConj(w) {
+  S.conjPending.add(w.id); render();
+  const prompt = `Give the full conjugation of the modern Israeli Hebrew verb ${w.he} (${w.en}), as Israelis use it today.
+
+Return exactly these forms, in this order, all with full nikud (vowel marks):
+- present: m.s., f.s., m.pl., f.pl.
+- past: אני, אתה, את, הוא, היא, אנחנו, אתם, אתן, הם, הן
+- future: אני, אתה, את, הוא, היא, אנחנו, אתם, אתן, הם, הן (use the everyday spoken forms, e.g. אתן/הן = תְּבַקְּרוּ/יְבַקְּרוּ; put the formal -נָה form in "note")
+- imperative: m.s., f.s., m.pl., f.pl.
+
+For each form:
+- "tense": present | past | future | imperative
+- "p": the pronoun(s) with nikud. Present: "אֲנִי / אַתָּה / הוּא" for m.s., "אֲנִי / אַתְּ / הִיא" for f.s., "אֲנַחְנוּ / אַתֶּם / הֵם" for m.pl., "אֲנַחְנוּ / אַתֶּן / הֵן" for f.pl. Imperative: "(אַתָּה)", "(אַתְּ)", "(אַתֶּם)", "(אַתֶּן)".
+- "g": "m", "f", or "" when it is the same for both (אני, אנחנו)
+- "n": "s" or "p"
+- "he": the verb form with full nikud
+- "tr": simple transliteration
+- "en": short English, e.g. "I visited", "you (f.) will visit", "they (f.) visit", "Visit! (to a woman)"
+- "note": "" unless something is worth knowing
+
+If the word is not actually a verb, reply {"notVerb": true}.
+Reply with only JSON: {"infinitive":"לְבַקֵּר","root":"ב-ק-ר","binyan":"pi'el","forms":[{"tense":"present","p":"אֲנִי / אַתָּה / הוּא","g":"m","n":"s","he":"מְבַקֵּר","tr":"mevaker","en":"I / you (m.) / he visit(s)","note":""}]}`;
+  try {
+    const out = await S.sample.json(prompt, { cache: false });
+    if (out?.notVerb) { if (!w.pos) store.patch(w.id, { pos: "other" }).catch(() => {}); return; }
+    const forms = (Array.isArray(out?.forms) ? out.forms : []).filter(f => f && f.he && TENSE_LABEL[f.tense]).map(f => ({
+      tense: f.tense, p: String(f.p || ""), g: f.g === "m" || f.g === "f" ? f.g : "", n: f.n === "p" ? "p" : "s",
+      he: String(f.he), tr: String(f.tr || ""), en: String(f.en || ""), note: String(f.note || ""),
+    }));
+    if (forms.length < 20) throw { code: "short" };
+    const doc = { src: strip(w.he).trim(), infinitive: String(out.infinitive || w.he), root: String(out.root || ""), binyan: String(out.binyan || ""), forms, made: now() };
+    if (S.mode === "db") await S.db.collection("conj").doc(w.id).set(doc);
+    else { S.conj[w.id] = doc; ls.set("kesher-conj", S.conj); }
+  } catch (e) {
+    S.conjErr = e?.code === "not_granted" ? "Building verb tables needs your OK to use Claude. Reload the page and choose Allow." : "";
+  } finally { S.conjPending.delete(w.id); render(); sweepConj(); }
+}
+
+// Every form of the chosen verb(s) that passes the filters
+function verbForms() {
+  const V = S.verb;
+  const verbs = V.pick === "all" ? verbList() : verbList().filter(w => w.id === V.pick);
+  const out = [];
+  for (const w of verbs) {
+    const c = conjFor(w); if (!c) continue;
+    c.forms.forEach((f, i) => {
+      if (!V.tenses.has(f.tense)) return;
+      if (V.num !== "all" && f.n !== V.num) return;
+      if (V.gen !== "all" && f.g && f.g !== V.gen) return;
+      out.push({ ...f, key: w.id + "|" + i, verbId: w.id, inf: c.infinitive, verbEn: w.en });
+    });
+  }
+  return out;
+}
+const formByKey = (k) => { const [id, i] = k.split("|"); const w = S.words.find(x => x.id === id); const c = w && conjFor(w); const f = c?.forms[+i]; return f ? { ...f, key: k, verbId: id, inf: c.infinitive, verbEn: w.en } : null; };
+const whoLabel = (f) => f.tense === "present" || f.tense === "imperative"
+  ? `${f.n === "s" ? "singular" : "plural"}${f.g ? ", " + (f.g === "m" ? "masculine" : "feminine") : ""}`
+  : "";
+
+function viewVerbs() {
+  const verbs = verbList(); const V = S.verb;
+  const intro = `<div><h2>Verbs</h2><p class="sub">Every verb in your list gets a full conjugation table. Practise who did what, and when: singular and plural, masculine and feminine, past, present, future and commands.</p></div>`;
+  if (!verbs.length) return intro + `<div class="panel empty"><span class="he" lang="he">אֵין פְּעָלִים עֲדַיִן</span>No verbs yet. Add one in My words, like "levaker, to visit". Anything marked as a verb, or with a meaning that starts with "to", shows up here.</div>`;
+  if (V.pick !== "all" && !verbs.some(w => w.id === V.pick)) V.pick = "all";
+  const chips = `<div class="chips">
+      <button class="chip" data-act="vpick" data-id="all" aria-pressed="${V.pick === "all"}">All verbs (${verbs.length})</button>
+      ${verbs.map(w => `<button class="chip" data-act="vpick" data-id="${w.id}" aria-pressed="${V.pick === w.id}"><span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span>${S.conjPending.has(w.id) ? `<span class="note">building…</span>` : !conjFor(w) ? `<span class="note">waiting</span>` : ""}</button>`).join("")}
+    </div>`;
+  const modes = `<div class="seg" role="group" aria-label="Practice type">
+      ${[["table", "Table"], ["cards", "Flashcards"], ["quiz", "Pick the form"], ["sent", "Sentences"]].map(([v, l]) => `<button data-act="vmode" data-v="${v}" aria-pressed="${V.mode === v}">${l}</button>`).join("")}</div>`;
+  const filters = V.mode === "table" ? "" : `<div class="row" style="gap:14px">
+      <div><label class="lbl">Tenses</label><div class="seg" role="group">${TENSES.map(([v, l]) => `<button data-act="vtense" data-v="${v}" aria-pressed="${V.tenses.has(v)}">${l}</button>`).join("")}</div></div>
+      <div><label class="lbl">Number</label><div class="seg" role="group">${[["all", "Both"], ["s", "Singular"], ["p", "Plural"]].map(([v, l]) => `<button data-act="vnum" data-v="${v}" aria-pressed="${V.num === v}">${l}</button>`).join("")}</div></div>
+      <div><label class="lbl">Gender</label><div class="seg" role="group">${[["all", "Both"], ["m", "Masc."], ["f", "Fem."]].map(([v, l]) => `<button data-act="vgen" data-v="${v}" aria-pressed="${V.gen === v}">${l}</button>`).join("")}</div></div>
+    </div>`;
+  const err = S.conjErr ? `<div class="banner">${esc(S.conjErr)}</div>` : "";
+  const body = V.mode === "table" ? verbTables() : V.mode === "cards" ? verbCards() : V.mode === "quiz" ? verbQuiz() : verbSentences();
+  return `${intro}<div class="panel" style="display:flex;flex-direction:column;gap:14px">${chips}${modes}${filters}${err}</div>${body}`;
+}
+
+function verbTables() {
+  const V = S.verb;
+  const verbs = (V.pick === "all" ? verbList() : verbList().filter(w => w.id === V.pick));
+  return verbs.map(w => {
+    const c = conjFor(w);
+    if (!c) return `<div class="panel"><h2 class="he" lang="he">${esc(w.he)}</h2><p class="note">${S.conjPending.has(w.id) ? "Building the conjugation table…" : S.sample ? "Table coming up shortly." : "Tables are built by Claude, which works when you open this page on claude.ai."}</p></div>`;
+    const sections = TENSES.map(([t, label]) => {
+      const rows = c.forms.map((f, i) => ({ f, i })).filter(x => x.f.tense === t);
+      if (!rows.length) return "";
+      return `<div class="ctable"><h3>${label}</h3><div class="ctable-scroll"><table>
+        ${rows.map(({ f, i }) => `<tr><td class="he pron" lang="he">${esc(f.p).replace(/ \/ /g, "<br>")}</td><td class="he form" lang="he">${esc(f.he)}</td><td class="en"><div class="tr">${esc(f.tr)}</div>${esc(f.en)}${f.note ? `<div class="note">${esc(f.note)}</div>` : ""}</td><td>${canSpeak() ? `<button class="speak" data-act="vsay" data-k="${w.id}|${i}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}</td></tr>`).join("")}
+      </table></div></div>`;
+    }).join("");
+    return `<div class="panel"><div class="row" style="justify-content:space-between;align-items:baseline"><h2><span class="he" lang="he" style="font-size:30px">${esc(c.infinitive)}</span> <span style="font-weight:400">${esc(w.en)}</span></h2>
+      <span class="note">${c.root ? `Root <span class="he" lang="he">${esc(c.root)}</span>` : ""}${c.binyan ? ` · ${esc(c.binyan)}` : ""}</span></div>${sections}</div>`;
+  }).join("");
+}
+
+function noForms() {
+  const anyTable = verbList().some(conjFor);
+  return `<div class="panel empty">${anyTable ? "No forms match these filters. Turn on more tenses, or set Number and Gender to Both." : "The conjugation tables are still being built. Check back in a moment."}</div>`;
+}
+
+/* Flashcards for verb forms */
+function verbCards() {
+  const V = S.verb; const s = V.session; const forms = verbForms();
+  if (!s) {
+    if (!forms.length) return noForms();
+    return `<div class="panel" style="display:flex;flex-direction:column;gap:12px">
+      <div class="seg" role="group" aria-label="Card direction">
+        <button data-act="vdir" data-v="make" aria-pressed="${V.dir === "make"}">Who + when → form</button>
+        <button data-act="vdir" data-v="read" aria-pressed="${V.dir === "read"}">Form → who + when</button></div>
+      <div class="row"><button class="btn primary" data-act="vcstart">Start ${forms.length} cards</button></div>
+      <p class="note" style="margin:0">Missed cards come back a few cards later. Tip: filter to one tense first, then mix them.</p></div>`;
+  }
+  if (!s.queue.length) {
+    const missed = [...s.missed].map(formByKey).filter(Boolean);
+    return `<div class="panel empty"><span class="he" lang="he">כָּל הַכָּבוֹד!</span>${s.right} of ${s.done} right on the first try.
+      ${missed.length ? `<div style="margin-top:12px;text-align:left"><b>Forms to look at again:</b><div class="chips" style="margin-top:6px">${missed.map(f => `<span class="chip"><span class="he" lang="he">${esc(f.he)}</span><span>${esc(f.en)}</span></span>`).join("")}</div></div>` : ""}
+      <div class="row" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="vcstart">Go again</button><button class="btn" data-act="vcend">Back</button></div></div>`;
+  }
+  const f = formByKey(s.queue[0]); if (!f) { s.queue.shift(); return verbCards(); }
+  const tag = `<div class="pos">${TENSE_LABEL[f.tense]}${whoLabel(f) ? " · " + whoLabel(f) : ""}</div>`;
+  const front = V.dir === "make"
+    ? `${tag}<div class="he big" lang="he" style="font-size:clamp(30px,8vw,44px)">${esc(f.p)}</div><div class="en" style="font-size:20px">${esc(f.en)}</div>`
+    : `<div class="big he" lang="he">${esc(f.he)}</div>`;
+  const back = s.flipped
+    ? `<div class="back">${V.dir === "make" ? `<div class="he" lang="he">${esc(f.he)}</div>` : `${tag}<div class="he" lang="he">${esc(f.p)}</div><div class="en">${esc(f.en)}</div>`}<div class="tr">${esc(f.tr)}</div><div class="note">from <span class="he" lang="he">${esc(f.inf)}</span> · ${esc(f.verbEn)}</div></div>`
+    : `<div class="hint">${V.dir === "make" ? "Say the form out loud, then tap to check" : "Who is doing it, and when? Tap to check"}</div>`;
+  const pct = Math.round(100 * s.done / (s.done + s.queue.length));
+  return `<div class="row" style="justify-content:space-between"><span class="note">${s.queue.length} left</span><button class="btn small" data-act="vcend">End session</button></div>
+    <div class="progress"><div style="width:${pct}%"></div></div>
+    <div class="card" data-act="vflip" role="button" tabindex="0" aria-label="Flip card">${front}
+      ${(s.flipped || V.dir === "read") && canSpeak() ? `<button class="speak" data-act="vsay" data-k="${f.key}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}${back}</div>
+    ${s.flipped ? `<div class="answer-row"><button class="btn bad" data-act="vgrade" data-v="0">Missed it<kbd>1</kbd></button><button class="btn good" data-act="vgrade" data-v="1">Got it<kbd>2</kbd></button></div>` : ""}`;
+}
+function verbCardGrade(ok) {
+  const s = S.verb.session; const k = s.queue.shift(); s.flipped = false;
+  if (ok) { s.done++; if (!s.missed.has(k)) s.right++; }
+  else { s.missed.add(k); s.queue.splice(Math.min(3, s.queue.length), 0, k); }
+  render();
+}
+
+/* Pick the right form out of similar ones */
+function makeQuiz() {
+  const forms = shuffle(verbForms()).slice(0, 10);
+  const items = forms.map(f => {
+    const all = (formByKey(f.key) && conjFor(S.words.find(w => w.id === f.verbId)).forms) || [];
+    const same = all.filter(x => x.he !== f.he && x.tense === f.tense);
+    const other = all.filter(x => x.he !== f.he && x.tense !== f.tense);
+    const pool = [...new Set([...shuffle(same), ...shuffle(other)].map(x => x.he))].slice(0, 3);
+    return { key: f.key, options: shuffle([f.he, ...pool]), picked: null };
+  });
+  S.verb.quiz = { items, i: 0, right: 0 };
+}
+function verbQuiz() {
+  const V = S.verb; const q = V.quiz;
+  if (!q) {
+    const n = verbForms().length; if (!n) return noForms();
+    return `<div class="panel" style="display:flex;flex-direction:column;gap:12px"><p style="margin:0">You see who is doing it and when. Pick the right form from look-alikes of the same verb.</p>
+      <div class="row"><button class="btn primary" data-act="vqstart">Start ${Math.min(10, n)} questions</button></div></div>`;
+  }
+  if (q.i >= q.items.length) return `<div class="panel empty"><span class="he" lang="he">${q.right >= q.items.length - 1 ? "מְצֻיָּן!" : "יֹפִי!"}</span>${q.right} of ${q.items.length} right.
+    <div class="row" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="vqstart">New round</button><button class="btn" data-act="vqend">Back</button></div></div>`;
+  const it = q.items[q.i]; const f = formByKey(it.key); if (!f) { q.i++; return verbQuiz(); }
+  return `<div class="row" style="justify-content:space-between"><span class="note">Question ${q.i + 1} of ${q.items.length}</span><button class="btn small" data-act="vqend">End</button></div>
+    <div class="panel quiz">
+      <div class="pos">${TENSE_LABEL[f.tense]}${whoLabel(f) ? " · " + whoLabel(f) : ""}</div>
+      <div class="he" lang="he" style="font-size:30px">${esc(f.p)} ___</div>
+      <div style="font-size:18px">${esc(f.en)}</div>
+      <div class="opts" style="justify-content:center">${it.options.map(o => {
+        const cls = it.picked ? (o === f.he ? "right" : o === it.picked ? "wrong" : "") : "";
+        return `<button class="btn ${cls}" data-act="vqpick" data-v="${esc(o)}" ${it.picked ? "disabled" : ""}>${esc(o)}</button>`;
+      }).join("")}</div>
+      ${it.picked ? `<div class="reveal" style="text-align:center"><div class="tr">${esc(f.tr)}</div>${it.picked !== f.he ? `<div class="note">${esc(it.picked)} is a different person or tense.</div>` : ""}</div>
+        <div class="row" style="justify-content:center">${canSpeak() ? `<button class="speak" data-act="vsay" data-k="${f.key}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}<button class="btn primary" data-act="vqnext">${q.i + 1 < q.items.length ? "Next" : "See score"}</button></div>` : ""}
+    </div>`;
+}
+
+/* Sentences that each use a different form */
+function verbSentences() {
+  const V = S.verb; const t = V.sent; const forms = verbForms();
+  if (!forms.length && !t.items.length) return noForms();
+  const controls = `<div class="panel" style="display:flex;flex-direction:column;gap:12px">
+      <p style="margin:0">Claude writes sentences about your interests, each using a different form of ${V.pick === "all" ? "your verbs" : "this verb"}, mixing singular and plural, masculine and feminine.</p>
+      <div class="row"><button class="btn primary" data-act="vsgen" ${t.busy || !S.sample || !forms.length ? "disabled" : ""}>${t.busy ? "Writing sentences…" : t.items.length ? "Write new sentences" : "Write 8 sentences"}</button></div>
+      ${!S.sample ? `<p class="note">Sentence writing uses Claude, which works when you open this page on claude.ai.</p>` : ""}
+      ${t.error ? `<div class="banner">${esc(t.error)}</div>` : ""}</div>`;
+  if (!t.items.length) return controls;
+  const list = `<div class="row" style="justify-content:space-between"><h2>Practice</h2><button class="btn small" data-act="nikud">${S.nikud ? "Hide nikud" : "Show nikud"}</button><div class="seg" role="group" aria-label="Practice mode">
+      ${[["read", "Read"], ["blank", "Fill the blank"], ["translate", "Translate"]].map(([v, l]) => `<button data-act="vsmode" data-v="${v}" aria-pressed="${t.mode === v}">${l}</button>`).join("")}</div></div>
+    <div class="panel">${t.title ? `<h3 class="story-title">${esc(t.title)}</h3>` : ""}${t.items.map((it, i) => verbSentenceHtml(it, i)).join("")}</div>`;
+  return controls + list;
+}
+function verbSentenceHtml(it, i) {
+  const mode = S.verb.sent.mode;
+  const blank = mode === "blank" && !it.picked; const hide = mode === "translate" && !it.shown;
+  const heLine = hide ? `<div class="en" style="flex:1;font-size:19px">${esc(it.en)}</div>` : `<div class="he" lang="he">${heHtml(heText(it), blank)}</div>`;
+  const speak = canSpeak() && !hide && !blank ? `<button class="speak" data-act="vssay" data-i="${i}" aria-label="Hear sentence">${SPEAK_ICON}</button>` : "";
+  const label = it.label ? `<span class="topic">${esc(it.label)}</span>` : "";
+  let extra;
+  if (mode === "blank") {
+    extra = `<div class="opts">${it.options.map(o => { const cls = it.picked ? (strip(o) === strip(it.answer) ? "right" : o === it.picked ? "wrong" : "") : ""; return `<button class="btn ${cls}" data-act="vschoose" data-i="${i}" data-v="${esc(o)}" ${it.picked ? "disabled" : ""}>${esc(o)}</button>`; }).join("")}</div>`;
+    if (it.picked) extra += reveal(it);
+  } else if (mode === "translate") {
+    extra = it.shown ? reveal(it, true) : `<div class="row" style="justify-content:flex-end"><span class="note">Say it in Hebrew, then check.</span><button class="btn small" data-act="vsshow" data-i="${i}">Show Hebrew</button></div>`;
+  } else extra = it.shown ? reveal(it) : `<div class="row" style="justify-content:flex-end"><button class="btn small" data-act="vsshow" data-i="${i}">Show meaning</button></div>`;
+  return `<div class="sentence">${label}<div class="line">${speak}${heLine}</div>${extra}</div>`;
+}
+async function genVerbSentences() {
+  const V = S.verb; const t = V.sent;
+  const forms = shuffle(verbForms());
+  // spread across tenses, numbers and genders: take a varied set of up to 8
+  const pickedForms = []; const seen = new Set();
+  for (const f of forms) { const k = f.verbId + f.tense + f.n + f.g; if (!seen.has(k)) { seen.add(k); pickedForms.push(f); } if (pickedForms.length >= 8) break; }
+  for (const f of forms) { if (pickedForms.length >= 8) break; if (!pickedForms.includes(f)) pickedForms.push(f); }
+  if (!pickedForms.length || !S.sample) return;
+  t.busy = true; t.error = ""; render();
+  const list = pickedForms.map((f, i) => `${i + 1}. ${strip(f.he)} = ${f.en} (${TENSE_LABEL[f.tense].toLowerCase()}${whoLabel(f) ? ", " + whoLabel(f) : ""})`).join("\n");
+  const vocab = S.words.map(w => `${strip(w.he)} = ${w.en}`).join(", ");
+  const n = pickedForms.length;
+  const prompt = `You are a Hebrew tutor writing practice sentences for an English-speaking learner of modern Israeli Hebrew who is practising verb conjugation.
+
+Write ${n} sentences. Sentence number k must use verb form number k from this list, exactly as given:
+${list}
+
+The subject must make the person, gender and number clear (use a pronoun or a clearly male/female/plural subject, e.g. "my sister", "the hikers"), so the learner can see why that form is used.
+Keep sentences short to medium (5-12 words). Other words should be simple; the learner also knows: ${vocab}.
+
+${memoryRules(n)}
+
+Rules:
+- Correct, natural Israeli Hebrew.
+- In "he", wrap the practised verb form in square brackets, e.g. "אחותי [ביקרה] אותי בחיפה". Write "he" WITHOUT nikud.
+- "heN": the same sentence WITH full nikud, with the same brackets.
+- "form": the practised verb form, as in the list.
+- "tr": simple transliteration. "en": natural English translation.
+- "grammar": one short note on why this form fits (e.g. "בִּקְּרָה: past, she — the subject אחותי is feminine singular").
+
+Reply with only JSON: {"title":"${S.prefs.story ? "A short title" : ""}","sentences":[{"he":"...","heN":"...","form":"...","tr":"...","en":"...","grammar":"..."}]}`;
+  try {
+    const out = await S.sample.json(prompt, { cache: false });
+    const arr = Array.isArray(out?.sentences) ? out.sentences : Array.isArray(out) ? out : [];
+    t.title = S.prefs.story && typeof out?.title === "string" ? out.title : "";
+    t.items = arr.filter(x => x && typeof x.he === "string" && x.he.includes("[")).map((x, i) => {
+      // Match by the form Claude says it used (spellings can differ, so compare without vowels or vav/yod), else by position
+      const loose = (h) => strip(h).replace(/[וי]/g, "");
+      const f = pickedForms.find(p => x.form && loose(p.he) === loose(x.form)) || pickedForms[i] || pickedForms[0];
+      // Choices all come from the table, with nikud, so the spelling never gives the answer away
+      const answer = f.he;
+      const c = conjFor(S.words.find(w => w.id === f.verbId));
+      const same = c ? c.forms.filter(o => o.tense === f.tense && o.he !== f.he).map(o => o.he) : [];
+      const rest = c ? c.forms.filter(o => o.he !== f.he).map(o => o.he) : [];
+      const dis = [...new Set([...shuffle(same), ...shuffle(rest)])].slice(0, 3);
+      return { he: x.he, heN: typeof x.heN === "string" && x.heN.includes("[") ? x.heN : "", tr: String(x.tr || ""), en: String(x.en || ""), grammar: String(x.grammar || ""),
+        label: `${TENSE_LABEL[f.tense]}${whoLabel(f) ? " · " + whoLabel(f) : ""}`, answer, options: shuffle([answer, ...dis]), shown: false, picked: null };
+    });
+    if (!t.items.length) t.error = "Claude's answer didn't contain any sentences. Try again.";
+  } catch (e) { t.error = SAMPLE_ERR[e?.code] || "Couldn't write sentences right now. Try again in a moment."; }
+  finally { t.busy = false; render(); }
+}
+
+function verbClick(a, el, v) {
+  const V = S.verb;
+  switch (a) {
+    case "vpick": V.pick = el.dataset.id; V.session = null; V.quiz = null; break;
+    case "vmode": V.mode = v; V.session = null; V.quiz = null; break;
+    case "vtense": { if (V.tenses.has(v)) { if (V.tenses.size > 1) V.tenses.delete(v); } else V.tenses.add(v); V.session = null; V.quiz = null; break; }
+    case "vnum": V.num = v; V.session = null; V.quiz = null; break;
+    case "vgen": V.gen = v; V.session = null; V.quiz = null; break;
+    case "vdir": V.dir = v; if (V.session) V.session.flipped = false; break;
+    case "vcstart": V.session = { queue: shuffle(verbForms().map(f => f.key)), done: 0, right: 0, flipped: false, missed: new Set() }; break;
+    case "vcend": V.session = null; break;
+    case "vflip": if (V.session) V.session.flipped = !V.session.flipped; break;
+    case "vgrade": verbCardGrade(v === "1"); return;
+    case "vqstart": makeQuiz(); break;
+    case "vqend": V.quiz = null; break;
+    case "vqpick": { const q = V.quiz; const it = q.items[q.i]; if (!it.picked) { it.picked = v; if (v === formByKey(it.key)?.he) q.right++; } break; }
+    case "vqnext": V.quiz.i++; break;
+    case "vsay": { const f = formByKey(el.dataset.k); if (f) say(f.he); return; }
+    case "vsgen": genVerbSentences(); return;
+    case "vsmode": V.sent.mode = v; V.sent.items.forEach(it => { it.shown = false; it.picked = null; }); break;
+    case "vsshow": V.sent.items[+el.dataset.i].shown = true; break;
+    case "vschoose": { const it = V.sent.items[+el.dataset.i]; if (it && !it.picked) { it.picked = v; it.shown = true; } break; }
+    case "vssay": { const it = V.sent.items[+el.dataset.i]; if (it) say(heSpoken(it)); return; }
+    default: return false;
+  }
+  render();
+  return true;
 }
 
 /* ---------- listening ---------- */
@@ -1028,6 +1365,7 @@ document.addEventListener("click", (e) => {
   const el = e.target.closest("[data-act]"); if (!el) return;
   const a = el.dataset.act, v = el.dataset.v;
   if (a === "say" || a === "saysent") e.stopPropagation();
+  if (a[0] === "v" && verbClick(a, el, v)) return;
   switch (a) {
     case "goto": S.tab = el.dataset.tab; if (S.tab !== "cards") S.session = null; render(); break;
     case "dir": S.dir = v; ls.set("kesher-prefs", { dir: S.dir, level: S.sent.level }); if (S.session) S.session.flipped = false; render(); break;
@@ -1069,7 +1407,8 @@ document.addEventListener("click", (e) => {
     case "vadd": addVoiceItems(); break;
     case "askdel": S.confirmDel = el.dataset.id; render(); break;
     case "nodel": S.confirmDel = null; render(); break;
-    case "del": store.remove(el.dataset.id).catch(showErr); S.confirmDel = null; render(); break;
+    case "del": if (S.mode === "db") S.db.collection("conj").doc(el.dataset.id).delete().catch(() => {}); else { delete S.conj[el.dataset.id]; ls.set("kesher-conj", S.conj); }
+      store.remove(el.dataset.id).catch(showErr); S.confirmDel = null; render(); break;
     case "bulk": {
       const lines = ($("#f-bulk").value || "").split("\n").map(l => l.trim()).filter(Boolean);
       const arr = lines.map(l => {
@@ -1114,6 +1453,13 @@ document.addEventListener("input", (e) => {
   if (e.target.id === "f-search") { S.filter = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#f-search"); s.focus(); s.setSelectionRange(pos, pos); }
 });
 document.addEventListener("keydown", (e) => {
+  const vs = S.verb.session;
+  if (S.tab === "verbs" && S.verb.mode === "cards" && vs?.queue.length && !/input|textarea|select/i.test(e.target.tagName)) {
+    if (e.key === " " || e.key === "Enter") { e.preventDefault(); vs.flipped = !vs.flipped; render(); }
+    else if (vs.flipped && (e.key === "1" || e.key === "ArrowLeft")) verbCardGrade(false);
+    else if (vs.flipped && (e.key === "2" || e.key === "ArrowRight")) verbCardGrade(true);
+    return;
+  }
   if (S.tab !== "cards" || !S.session?.queue.length || /input|textarea|select/i.test(e.target.tagName)) return;
   if (e.key === " " || e.key === "Enter") { e.preventDefault(); S.session.flipped = !S.session.flipped; render(); }
   else if (S.session.flipped && (e.key === "1" || e.key === "ArrowLeft")) grade(false);
