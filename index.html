@@ -1,0 +1,583 @@
+<title>Kesher Hebrew</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Frank+Ruhl+Libre:wght@500;700&family=Rubik:wght@400;500;600&display=swap">
+<style>
+/* Layout: one narrow study column; sticky tab bar; the Hebrew word is always the biggest thing on screen. */
+:root {
+  --bg: #f3f5f8;
+  --surface: #ffffff;
+  --ink: #16202e;
+  --muted: #5d6878;
+  --line: #dde2ea;
+  --accent: #1d4f91;      /* tekhelet blue */
+  --accent-soft: #e3ecf8;
+  --mark: #f2b632;        /* highlight for your words */
+  --mark-soft: #fdf1d3;
+  --good: #1f7a4d;
+  --good-soft: #e1f3e9;
+  --bad: #b3361f;
+  --bad-soft: #fbe5e0;
+  --font-ui: "Rubik", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-he: "Frank Ruhl Libre", "David", "Times New Roman", serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #0f141c; --surface: #18202c; --ink: #e8edf4; --muted: #98a3b3; --line: #2a3443;
+    --accent: #7fb0f0; --accent-soft: #1f3150; --mark: #f2b632; --mark-soft: #3d3218;
+    --good: #5cc790; --good-soft: #163527; --bad: #f08a72; --bad-soft: #3d1f19; color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #0f141c; --surface: #18202c; --ink: #e8edf4; --muted: #98a3b3; --line: #2a3443;
+  --accent: #7fb0f0; --accent-soft: #1f3150; --mark: #f2b632; --mark-soft: #3d3218;
+  --good: #5cc790; --good-soft: #163527; --bad: #f08a72; --bad-soft: #3d1f19; color-scheme: dark;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--ink); font-family: var(--font-ui); font-size: 15px; line-height: 1.5; }
+body::before { content: ""; position: fixed; inset: 0 0 auto; height: env(safe-area-inset-top, 0px); z-index: 10; background: var(--surface); }
+.he { font-family: var(--font-he); direction: rtl; unicode-bidi: isolate; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+header.top {
+  position: sticky; top: env(safe-area-inset-top, 0px); z-index: 5;
+  background: var(--surface); border-bottom: 1px solid var(--line);
+}
+.top-inner, main {
+  max-width: 720px; margin: 0 auto;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.top-inner { display: flex; align-items: center; gap: 16px; flex-wrap: wrap; padding-block: 12px 0; }
+.brand { display: flex; align-items: baseline; gap: 10px; margin-right: auto; }
+.brand .he { font-size: 26px; font-weight: 700; color: var(--accent); }
+.brand span:last-child { font-weight: 600; letter-spacing: .02em; }
+.stats { display: flex; gap: 14px; font-size: 13px; color: var(--muted); font-variant-numeric: tabular-nums; }
+.stats b { color: var(--ink); font-weight: 600; }
+nav.tabs { display: flex; gap: 4px; width: 100%; }
+nav.tabs button {
+  flex: 1; background: none; border: none; padding: 10px 8px 12px; color: var(--muted);
+  font-weight: 500; border-bottom: 3px solid transparent;
+}
+nav.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+
+main { padding-block: 24px 64px; display: flex; flex-direction: column; gap: 20px; }
+h2 { font-size: 18px; margin: 0; text-wrap: balance; }
+.sub { color: var(--muted); margin: 4px 0 0; font-size: 14px; }
+.row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+.panel { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+.btn {
+  border: 1px solid var(--line); background: var(--surface); padding: 9px 14px; border-radius: 8px; font-weight: 500;
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.btn.good { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+.btn.bad { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn.small { padding: 5px 10px; font-size: 13px; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { border: none; background: var(--surface); padding: 7px 12px; font-size: 13px; color: var(--muted); }
+.seg button[aria-pressed="true"] { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
+label.lbl { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); display: block; margin-bottom: 4px; }
+input[type=text], select, textarea {
+  width: 100%; border: 1px solid var(--line); background: var(--bg); border-radius: 8px; padding: 9px 11px;
+}
+textarea { min-height: 110px; resize: vertical; }
+.note { font-size: 13px; color: var(--muted); }
+.banner { background: var(--mark-soft); border-radius: 8px; padding: 10px 12px; font-size: 14px; }
+
+/* Flashcard */
+.card {
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  min-height: 280px; padding: 28px 20px; display: flex; flex-direction: column;
+  align-items: center; justify-content: center; text-align: center; gap: 10px; cursor: pointer;
+  box-shadow: 0 1px 0 var(--line), 0 10px 30px -18px rgba(20, 40, 80, .35);
+}
+.card .big.he { font-size: clamp(44px, 12vw, 72px); line-height: 1.15; }
+.card .big.en { font-size: clamp(26px, 7vw, 36px); font-weight: 500; }
+.card .tr { color: var(--muted); font-style: italic; }
+.card .hint { font-size: 13px; color: var(--muted); }
+.card .back { display: flex; flex-direction: column; gap: 6px; align-items: center; border-top: 1px dashed var(--line); padding-top: 12px; margin-top: 6px; width: 100%; }
+.card .back .he { font-size: 34px; }
+.card .back .en { font-size: 20px; }
+.card .pos { font-size: 12px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
+.progress { height: 4px; background: var(--line); border-radius: 4px; overflow: hidden; }
+.progress > div { height: 100%; background: var(--accent); transition: width .25s; }
+.answer-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.answer-row .btn { padding: 13px; font-size: 16px; }
+kbd { font-family: inherit; font-size: 11px; border: 1px solid currentColor; border-radius: 4px; padding: 0 4px; opacity: .7; margin-left: 6px; }
+.speak { background: none; border: 1px solid var(--line); border-radius: 50%; width: 36px; height: 36px; display: inline-grid; place-items: center; color: var(--accent); }
+.speak svg { width: 18px; height: 18px; }
+
+/* Sentences */
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { border: 1px solid var(--line); background: var(--bg); border-radius: 999px; padding: 4px 10px; font-size: 14px; display: inline-flex; gap: 6px; align-items: baseline; }
+.chip .he { font-size: 17px; }
+.chip[aria-pressed="true"] { background: var(--mark-soft); border-color: var(--mark); }
+.sentence { display: flex; flex-direction: column; gap: 8px; padding-block: 16px; border-bottom: 1px solid var(--line); }
+.sentence:last-child { border-bottom: none; }
+.sentence .line { display: flex; gap: 12px; align-items: flex-start; }
+.sentence .line .he { font-size: 26px; line-height: 1.6; flex: 1; min-width: 0; text-align: right; }
+.sentence mark { background: var(--mark-soft); color: inherit; border-bottom: 2px solid var(--mark); padding: 0 2px; border-radius: 3px; }
+.sentence .blank { display: inline-block; min-width: 3.2em; border-bottom: 2px solid var(--accent); }
+.sentence .reveal { display: flex; flex-direction: column; gap: 2px; }
+.sentence .reveal .tr { color: var(--muted); font-style: italic; font-size: 14px; }
+.sentence .gram { font-size: 13px; color: var(--muted); }
+.opts { display: flex; flex-wrap: wrap; gap: 8px; justify-content: flex-end; direction: rtl; }
+.opts button { font-family: var(--font-he); font-size: 20px; padding: 4px 14px; }
+.opts button.right { background: var(--good-soft); border-color: var(--good); color: var(--good); }
+.opts button.wrong { background: var(--bad-soft); border-color: var(--bad); color: var(--bad); }
+
+/* Word list */
+.wordlist { display: flex; flex-direction: column; }
+.word { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items: center; }
+.word:last-child { border-bottom: none; }
+.word .main { display: flex; gap: 12px; align-items: baseline; flex-wrap: wrap; min-width: 0; }
+.word .main .he { font-size: 24px; }
+.word .main .tr { color: var(--muted); font-style: italic; font-size: 14px; }
+.word .acts { display: flex; gap: 6px; align-items: center; }
+.boxes { display: inline-flex; gap: 3px; }
+.boxes i { width: 7px; height: 7px; border-radius: 50%; background: var(--line); }
+.boxes i.on { background: var(--good); }
+.tag { font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); border: 1px solid var(--line); padding: 0 6px; border-radius: 4px; }
+.form-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.form-grid .full { grid-column: 1 / -1; }
+@media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
+details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+.empty { text-align: center; padding: 32px 16px; color: var(--muted); }
+.empty .he { font-size: 40px; color: var(--ink); display: block; margin-bottom: 8px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
+</style>
+
+<header class="top">
+  <div class="top-inner">
+    <div class="brand"><span class="he" lang="he">קֶשֶׁר</span><span>Kesher</span></div>
+    <div class="stats" id="stats"></div>
+    <nav class="tabs" role="tablist">
+      <button role="tab" data-tab="cards" aria-selected="true">Flashcards</button>
+      <button role="tab" data-tab="sentences" aria-selected="false">Sentences</button>
+      <button role="tab" data-tab="words" aria-selected="false">My words</button>
+    </nav>
+  </div>
+</header>
+
+<main id="main"></main>
+
+<script>
+(() => {
+const DAY = 86400000;
+const INTERVALS = { 1: 10 * 60000, 2: DAY, 3: 3 * DAY, 4: 7 * DAY, 5: 16 * DAY };
+const SPEAK_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7"/><path d="M19 5a10 10 0 0 1 0 14"/></svg>';
+
+const S = {
+  words: [], loaded: false, mode: "local", db: null, sample: null, tts: null,
+  tab: "cards", dir: "he-en",
+  session: null,         // {queue, done, right, flipped}
+  sent: { level: "beginner", focus: "due", picked: new Set(), items: [], mode: "read", busy: false, error: "" },
+  confirmDel: null, filter: "",
+};
+
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const strip = (s) => String(s ?? "").replace(/[֑-ׇ]/g, "");
+const now = () => Date.now();
+const uid = () => Math.random().toString(36).slice(2, 10);
+const shuffle = (a) => { a = a.slice(); for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
+const ls = { get(k) { try { return JSON.parse(localStorage.getItem(k)); } catch { return null; } }, set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch {} } };
+
+/* ---------- storage ---------- */
+const store = {
+  async put(w) {
+    if (S.mode === "db") return S.db.collection("words").doc(w.id).set(clean(w));
+    S.words = S.words.filter(x => x.id !== w.id).concat(w); saveLocal();
+  },
+  async patch(id, p) {
+    if (S.mode === "db") return S.db.collection("words").doc(id).update(p);
+    const w = S.words.find(x => x.id === id); if (w) Object.assign(w, p); saveLocal();
+  },
+  async remove(id) {
+    if (S.mode === "db") return S.db.collection("words").doc(id).delete();
+    S.words = S.words.filter(x => x.id !== id); saveLocal();
+  },
+};
+function clean(w) { const o = { ...w }; delete o.id; return o; }
+function saveLocal() { ls.set("kesher-words", S.words); render(); }
+
+async function boot() {
+  const pref = ls.get("kesher-prefs"); if (pref?.dir) S.dir = pref.dir; if (pref?.level) S.sent.level = pref.level;
+  render();
+  const use = window.claude?.use?.bind(window.claude);
+  const [db, sample, tts] = use ? await Promise.all([use("db"), use("sample"), use("tts")].map(p => p.catch(() => null))) : [null, null, null];
+  S.sample = sample; S.tts = tts;
+  if (db) {
+    S.db = db; S.mode = "db";
+    const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
+    db.collection("words").onSnapshot(snap => {
+      S.words = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      if (!snap.metadata.fromCache) { S.loaded = true; S.slow = false; clearTimeout(timer); }
+      else if (S.words.length) S.loaded = true;
+      render();
+    }, err => { clearTimeout(timer); S.loaded = true; S.dbError = err.code; render(); });
+  } else {
+    S.words = ls.get("kesher-words") || [];
+    S.loaded = true; render();
+  }
+}
+
+/* ---------- derived ---------- */
+const isDue = (w) => (w.due ?? 0) <= now();
+function stats() {
+  const due = S.words.filter(isDue).length;
+  const strong = S.words.filter(w => (w.box ?? 1) >= 4).length;
+  return { total: S.words.length, due, strong };
+}
+
+/* ---------- render ---------- */
+function render() {
+  const st = stats();
+  $("#stats").innerHTML = `<span><b>${st.total}</b> words</span><span><b>${st.due}</b> due</span><span><b>${st.strong}</b> strong</span>`;
+  document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === S.tab)));
+  const m = $("#main");
+  if (!S.loaded) { m.innerHTML = `<div class="empty">${S.slow ? "Can't reach your saved words yet. Check your connection." : "Loading your words…"}</div>`; return; }
+  const top = S.dbError ? `<div class="banner">Your saved words couldn't load (${esc(S.dbError)}). Reload the page to try again.</div>` : "";
+  m.innerHTML = top + (S.tab === "cards" ? viewCards() : S.tab === "sentences" ? viewSentences() : viewWords());
+}
+
+function emptyState(msg) {
+  return `<div class="panel empty"><span class="he" lang="he">אֵין מִלִּים עֲדַיִן</span>${msg}<div class="row" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="goto" data-tab="words">Add your first words</button></div><p class="note" style="margin-top:12px">You can also tell Claude in chat which words to add.</p></div>`;
+}
+
+/* ---------- flashcards ---------- */
+function viewCards() {
+  if (!S.words.length) return emptyState("No words yet. Add some and your flashcards will show up here.");
+  const s = S.session;
+  const dirSeg = `<div class="seg" role="group" aria-label="Card direction">
+      <button data-act="dir" data-v="he-en" aria-pressed="${S.dir === "he-en"}">עברית → English</button>
+      <button data-act="dir" data-v="en-he" aria-pressed="${S.dir === "en-he"}">English → עברית</button></div>`;
+  if (!s) {
+    const st = stats();
+    return `<div><h2>Flashcards</h2><p class="sub">Words you get right come back less often. Words you miss come back soon.</p></div>
+      <div class="panel" style="display:flex;flex-direction:column;gap:14px">
+        ${dirSeg}
+        <div class="row">
+          <button class="btn primary" data-act="start" data-v="due" ${st.due ? "" : "disabled"}>Review ${st.due} due word${st.due === 1 ? "" : "s"}</button>
+          <button class="btn" data-act="start" data-v="all">Practice all ${st.total}</button>
+          <button class="btn" data-act="start" data-v="weak">Weakest 10</button>
+        </div>
+        ${st.due ? "" : `<p class="note">Nothing due right now. Practice anyway, or try the Sentences tab.</p>`}
+      </div>`;
+  }
+  if (!s.queue.length) {
+    return `<div class="panel empty"><span class="he" lang="he">כָּל הַכָּבוֹד!</span>Session done: ${s.right} of ${s.done} right on the first try.
+      <div class="row" style="justify-content:center;margin-top:14px"><button class="btn primary" data-act="goto" data-tab="sentences">Use these words in sentences</button><button class="btn" data-act="end">Back</button></div></div>`;
+  }
+  const w = S.words.find(x => x.id === s.queue[0]);
+  if (!w) { s.queue.shift(); return viewCards(); }
+  const pct = Math.round(100 * s.done / (s.done + s.queue.length));
+  const heFirst = S.dir === "he-en";
+  const front = heFirst
+    ? `<div class="big he" lang="he">${esc(w.he)}</div>`
+    : `<div class="big en">${esc(w.en)}</div>`;
+  const back = s.flipped ? `<div class="back">
+      ${heFirst ? `<div class="en">${esc(w.en)}</div>` : `<div class="he" lang="he">${esc(w.he)}</div>`}
+      ${w.tr ? `<div class="tr">${esc(w.tr)}</div>` : ""}
+      ${w.note ? `<div class="note">${esc(w.note)}</div>` : ""}
+    </div>` : `<div class="hint">Tap or press space to flip</div>`;
+  return `<div class="row" style="justify-content:space-between">${dirSeg}<button class="btn small" data-act="end">End session</button></div>
+    <div class="progress"><div style="width:${pct}%"></div></div>
+    <div class="card" data-act="flip" role="button" tabindex="0" aria-label="Flip card">
+      ${w.pos ? `<div class="pos">${esc(w.pos)}</div>` : ""}
+      ${front}
+      ${(heFirst || s.flipped) && S.tts ? `<button class="speak" data-act="say" data-id="${w.id}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}
+      ${back}
+    </div>
+    ${s.flipped ? `<div class="answer-row"><button class="btn bad" data-act="grade" data-v="0">Missed it<kbd>1</kbd></button><button class="btn good" data-act="grade" data-v="1">Got it<kbd>2</kbd></button></div>` : ""}
+    <p class="note" style="text-align:center">${s.queue.length} left in this session</p>`;
+}
+
+function startSession(kind) {
+  let ids;
+  if (kind === "due") ids = S.words.filter(isDue).sort((a, b) => (a.due ?? 0) - (b.due ?? 0)).map(w => w.id);
+  else if (kind === "weak") ids = shuffle(S.words).sort((a, b) => (a.box ?? 1) - (b.box ?? 1)).slice(0, 10).map(w => w.id);
+  else ids = shuffle(S.words).map(w => w.id);
+  if (kind !== "due") ids = shuffle(ids);
+  S.session = { queue: ids, done: 0, right: 0, flipped: false, missed: new Set() };
+  render();
+}
+
+async function grade(ok) {
+  const s = S.session; const id = s.queue.shift(); const w = S.words.find(x => x.id === id);
+  s.flipped = false;
+  if (!w) return render();
+  if (ok) {
+    if (!s.missed.has(id)) {
+      s.done++; s.right++;
+      const box = Math.min(5, (w.box ?? 1) + 1);
+      store.patch(id, { box, due: now() + INTERVALS[box], seen: (w.seen ?? 0) + 1, right: (w.right ?? 0) + 1 }).catch(showErr);
+    } else s.done++;
+  } else {
+    if (!s.missed.has(id)) {
+      s.missed.add(id);
+      store.patch(id, { box: 1, due: now() + INTERVALS[1], seen: (w.seen ?? 0) + 1 }).catch(showErr);
+    }
+    s.queue.splice(Math.min(3, s.queue.length), 0, id); // see it again in a few cards
+  }
+  render();
+}
+
+/* ---------- sentences ---------- */
+function targetWords() {
+  const f = S.sent.focus;
+  if (f === "pick") return S.words.filter(w => S.sent.picked.has(w.id));
+  if (f === "due") { const d = S.words.filter(isDue); if (d.length) return shuffle(d).slice(0, 8); }
+  if (f === "weak") return shuffle(S.words).sort((a, b) => (a.box ?? 1) - (b.box ?? 1)).slice(0, 8);
+  return shuffle(S.words).slice(0, 8);
+}
+
+function viewSentences() {
+  if (!S.words.length) return emptyState("Add a few words and Claude will write practice sentences with them.");
+  const t = S.sent;
+  const chips = t.focus === "pick" ? `<div class="chips">${S.words.map(w => `<button class="chip" data-act="pick" data-id="${w.id}" aria-pressed="${t.picked.has(w.id)}"><span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span></button>`).join("")}</div>` : "";
+  const controls = `<div class="panel" style="display:flex;flex-direction:column;gap:14px">
+      <div class="row" style="gap:18px">
+        <div><label class="lbl">Level</label><div class="seg" role="group">
+          ${[["beginner", "Beginner"], ["simple", "Everyday"], ["intermediate", "Intermediate"]].map(([v, l]) => `<button data-act="level" data-v="${v}" aria-pressed="${t.level === v}">${l}</button>`).join("")}</div></div>
+        <div><label class="lbl">Focus on</label><div class="seg" role="group">
+          ${[["due", "Due words"], ["weak", "Weakest"], ["mix", "Random"], ["pick", "I'll choose"]].map(([v, l]) => `<button data-act="focus" data-v="${v}" aria-pressed="${t.focus === v}">${l}</button>`).join("")}</div></div>
+      </div>
+      ${chips}
+      <div class="row">
+        <button class="btn primary" data-act="gen" ${t.busy || !S.sample || (t.focus === "pick" && !t.picked.size) ? "disabled" : ""}>${t.busy ? "Writing sentences…" : t.items.length ? "Write new sentences" : "Write 6 sentences"}</button>
+        ${t.busy ? `<button class="btn" data-act="stop">Stop</button>` : ""}
+      </div>
+      ${!S.sample ? `<p class="note">Sentence writing uses Claude, which is only available when you open this page on claude.ai.</p>` : ""}
+      ${t.error ? `<div class="banner">${esc(t.error)}</div>` : ""}
+    </div>`;
+  let list = "";
+  if (t.items.length) {
+    list = `<div class="row" style="justify-content:space-between"><h2>Practice</h2><div class="seg" role="group" aria-label="Practice mode">
+        <button data-act="smode" data-v="read" aria-pressed="${t.mode === "read"}">Read</button>
+        <button data-act="smode" data-v="blank" aria-pressed="${t.mode === "blank"}">Fill the blank</button>
+        <button data-act="smode" data-v="translate" aria-pressed="${t.mode === "translate"}">Translate</button></div></div>
+      <div class="panel">${t.items.map((it, i) => sentenceHtml(it, i)).join("")}</div>`;
+  }
+  return `<div><h2>Sentences</h2><p class="sub">Claude writes new sentences using your words, so you see them in real context. Highlighted words are from your list.</p></div>${controls}${list}`;
+}
+
+// "he" marks the learner's words with [brackets]
+function heHtml(raw, blankFirst) {
+  let first = true;
+  return esc(raw).replace(/\[([^\]]+)\]/g, (_, w) => {
+    if (blankFirst && first) { first = false; return `<span class="blank">&nbsp;</span>`; }
+    return `<mark>${w}</mark>`;
+  });
+}
+
+function sentenceHtml(it, i) {
+  const t = S.sent; const mode = t.mode;
+  const blank = mode === "blank" && !it.picked;
+  const hide = mode === "translate" && !it.shown;
+  const heLine = hide
+    ? `<div class="en" style="flex:1;font-size:19px">${esc(it.en)}</div>`
+    : `<div class="he" lang="he">${heHtml(it.he, blank)}</div>`;
+  const speak = S.tts && !hide && !blank ? `<button class="speak" data-act="saysent" data-i="${i}" aria-label="Hear sentence">${SPEAK_ICON}</button>` : "";
+  let extra = "";
+  if (mode === "blank") {
+    extra = `<div class="opts">${it.options.map(o => {
+      const cls = it.picked ? (strip(o) === strip(it.answer) ? "right" : o === it.picked ? "wrong" : "") : "";
+      return `<button class="btn ${cls}" data-act="choose" data-i="${i}" data-v="${esc(o)}" ${it.picked ? "disabled" : ""}>${esc(o)}</button>`;
+    }).join("")}</div>`;
+    if (it.picked) extra += reveal(it);
+  } else if (mode === "translate") {
+    extra = it.shown ? reveal(it, true) : `<div class="row" style="justify-content:flex-end"><span class="note">Say it in Hebrew, then check.</span><button class="btn small" data-act="show" data-i="${i}">Show Hebrew</button></div>`;
+  } else {
+    extra = it.shown ? reveal(it) : `<div class="row" style="justify-content:flex-end"><button class="btn small" data-act="show" data-i="${i}">Show meaning</button></div>`;
+  }
+  return `<div class="sentence"><div class="line">${speak}${heLine}</div>${extra}</div>`;
+}
+function reveal(it, skipEn) {
+  return `<div class="reveal">${it.tr ? `<div class="tr">${esc(it.tr)}</div>` : ""}${skipEn ? "" : `<div>${esc(it.en)}</div>`}${it.grammar ? `<div class="gram">${esc(it.grammar)}</div>` : ""}</div>`;
+}
+
+let genCtl = null;
+async function generate() {
+  const t = S.sent; const targets = targetWords();
+  if (!targets.length || !S.sample) return;
+  t.busy = true; t.error = ""; render();
+  genCtl = new AbortController();
+  const vocab = S.words.map(w => `${w.he} = ${w.en}${w.pos ? ` (${w.pos})` : ""}`).join("\n");
+  const focus = targets.map(w => `${w.he} = ${w.en}`).join("\n");
+  const levelText = {
+    beginner: "Very short sentences (3-6 words), present tense, simple structure.",
+    simple: "Everyday sentences (5-10 words). Present, past or future tense are fine.",
+    intermediate: "Natural sentences (8-15 words). Mix tenses, use some connectors like כי, אבל, ש-.",
+  }[t.level];
+  const prompt = `You are a Hebrew tutor writing practice sentences for an English-speaking learner of modern Israeli Hebrew.
+
+The learner's vocabulary list:
+${vocab}
+
+Focus words for this round (use each at least once across the set):
+${focus}
+
+Write 6 sentences. ${levelText}
+Rules:
+- Build sentences mostly from the learner's vocabulary. You may add very common basic words (pronouns, את, של, ב-, ל-, ה-, זה, יש, אין, גם, מאוד, ו-) and a few simple everyday words when needed.
+- Conjugate and inflect naturally (gender, number, tense, prefixes). The sentence must be correct, natural Israeli Hebrew.
+- Each sentence uses at least one focus word. Mix the words together so each sentence uses 2 or more of the learner's words when possible.
+- In "he", wrap every word from the learner's list in square brackets, exactly as it appears in the sentence, including any attached prefix, e.g. "אני [אוכל] [תפוח] [בבית]". Write "he" WITHOUT nikkud.
+- "answer" is the first bracketed word, exactly as written inside its brackets.
+- "distractors": 3 other plausible Hebrew words or forms that do NOT fit that blank, preferably from the learner's list, no nikkud.
+- "tr": transliteration in simple English letters.
+- "grammar": one short plain-English note on a form that changed (e.g. "אכלתי = I ate, past tense of לאכול"), or "" if nothing notable.
+
+Reply with only a JSON array like:
+[{"he":"אני [אוכל] [תפוח]","tr":"ani okhel tapuakh","en":"I eat an apple.","answer":"אוכל","distractors":["שותה","הולך","ספר"],"grammar":""}]`;
+  try {
+    const out = await S.sample.json(prompt, { signal: genCtl.signal, cache: false });
+    const arr = Array.isArray(out) ? out : [];
+    t.items = arr.filter(x => x && typeof x.he === "string" && typeof x.en === "string").map(x => {
+      const answer = String(x.answer || (x.he.match(/\[([^\]]+)\]/) || [])[1] || "");
+      const dis = (Array.isArray(x.distractors) ? x.distractors.map(String) : []).filter(d => strip(d) !== strip(answer));
+      while (dis.length < 3) { const r = S.words[Math.floor(Math.random() * S.words.length)]; const c = strip(r.he); if (c !== strip(answer) && !dis.includes(c)) dis.push(c); if (S.words.length < 4) break; }
+      return { he: x.he, tr: String(x.tr || ""), en: x.en, grammar: String(x.grammar || ""), answer, options: shuffle([answer, ...dis.slice(0, 3)]), shown: false, picked: null };
+    });
+    if (!t.items.length) t.error = "Claude's answer didn't contain any sentences. Try again.";
+  } catch (e) {
+    if (e?.code !== "cancelled") t.error = {
+      not_granted: "Sentence writing needs your OK to use Claude. Reload the page and allow it to try again.",
+      rate_limited: "Too many requests just now. Wait a minute and try again.",
+      invalid_json: "Claude's answer came back garbled. Try again.",
+    }[e?.code] || "Couldn't write sentences right now. Try again in a moment.";
+  } finally { t.busy = false; genCtl = null; render(); }
+}
+
+function choose(i, v) {
+  const it = S.sent.items[i]; if (!it || it.picked) return;
+  it.picked = v; it.shown = true;
+  if (strip(v) !== strip(it.answer)) {
+    // Missing it in context sends the word back for review
+    const a = strip(it.answer);
+    const w = S.words.find(w => strip(w.he) === a) || S.words.find(w => a.endsWith(strip(w.he)) || a.includes(strip(w.he)));
+    if (w) store.patch(w.id, { box: 1, due: now() }).catch(showErr);
+  }
+  render();
+}
+
+/* ---------- words ---------- */
+function viewWords() {
+  const q = S.filter.trim().toLowerCase();
+  const list = S.words.slice().sort((a, b) => (b.added ?? 0) - (a.added ?? 0))
+    .filter(w => !q || strip(w.he).includes(strip(q)) || (w.en || "").toLowerCase().includes(q) || (w.tr || "").toLowerCase().includes(q));
+  const form = `<form class="panel" id="addForm" style="display:flex;flex-direction:column;gap:12px">
+      <h2>Add a word</h2>
+      <div class="form-grid">
+        <div><label class="lbl" for="f-he">Hebrew</label><input type="text" id="f-he" class="he" lang="he" dir="rtl" required placeholder="שָׁלוֹם"></div>
+        <div><label class="lbl" for="f-en">English</label><input type="text" id="f-en" required placeholder="hello, peace"></div>
+        <div><label class="lbl" for="f-tr">Pronunciation (optional)</label><input type="text" id="f-tr" placeholder="shalom"></div>
+        <div><label class="lbl" for="f-pos">Type (optional)</label><select id="f-pos"><option value="">—</option><option>noun</option><option>verb</option><option>adjective</option><option>adverb</option><option>phrase</option><option>other</option></select></div>
+        <div class="full"><label class="lbl" for="f-note">Note (optional)</label><input type="text" id="f-note" placeholder="e.g. masculine; plural שְׁלוֹמוֹת"></div>
+      </div>
+      <div class="row"><button class="btn primary" type="submit">Add word</button><span class="note" id="addMsg"></span></div>
+      <details><summary>Add many at once</summary>
+        <p class="note">One word per line: <span class="he">Hebrew</span> = English, or Hebrew | pronunciation | English.</p>
+        <textarea id="f-bulk" dir="auto" placeholder="כֶּלֶב = dog&#10;חָתוּל | khatul | cat"></textarea>
+        <div class="row" style="margin-top:8px"><button class="btn" type="button" data-act="bulk">Add these</button></div>
+      </details>
+    </form>`;
+  const rows = list.map(w => {
+    const box = w.box ?? 1;
+    const dots = [1, 2, 3, 4, 5].map(n => `<i class="${n <= box ? "on" : ""}"></i>`).join("");
+    const del = S.confirmDel === w.id
+      ? `<button class="btn small bad" data-act="del" data-id="${w.id}">Delete</button><button class="btn small" data-act="nodel">Keep</button>`
+      : `<button class="btn small" data-act="askdel" data-id="${w.id}" aria-label="Delete ${esc(w.en)}">Remove</button>`;
+    return `<div class="word">
+      <div class="main">${S.tts ? `<button class="speak" data-act="say" data-id="${w.id}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}<span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span>${w.tr ? `<span class="tr">${esc(w.tr)}</span>` : ""}${w.tag ? `<span class="tag">${esc(w.tag)}</span>` : ""}</div>
+      <div class="acts"><span class="boxes" title="Strength ${box} of 5">${dots}</span>${del}</div>
+      ${w.note ? `<div class="note" style="grid-column:1/-1">${esc(w.note)}</div>` : ""}
+    </div>`;
+  }).join("");
+  return `${form}<div class="panel">
+      <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2>My words (${S.words.length})</h2><input type="text" id="f-search" placeholder="Search" style="max-width:200px" value="${esc(S.filter)}"></div>
+      ${S.words.length ? `<div class="wordlist">${rows || `<p class="note">No matches.</p>`}</div>` : `<p class="note">Your list is empty. Add words above, or tell Claude in chat which words to add.</p>`}
+    </div>`;
+}
+
+function newWord(he, en, tr = "", pos = "", note = "") {
+  return { id: uid(), he: he.trim(), en: en.trim(), tr: tr.trim(), pos, note: note.trim(), box: 1, due: now(), seen: 0, right: 0, added: now() };
+}
+async function addWords(arr) {
+  const existing = new Set(S.words.map(w => strip(w.he)));
+  const fresh = arr.filter(w => w.he && w.en && !existing.has(strip(w.he)));
+  for (const w of fresh) { await store.put(w).catch(showErr); }
+  return { added: fresh.length, skipped: arr.length - fresh.length };
+}
+function showErr(e) {
+  const m = e?.code === "invalid_argument" ? "You can view this list but not change it." : e?.code === "quota_exceeded" ? "Your word list is full." : "Couldn't save that change. Check your connection and try again.";
+  const el = $("#addMsg"); if (el) el.textContent = m; else { S.sent.error = m; render(); }
+}
+
+async function say(text) {
+  if (!S.tts) return;
+  try { await S.tts.speak(text, { language: "he" }); } catch (e) { if (e?.code === "not_granted") { S.tts = null; render(); } }
+}
+
+/* ---------- events ---------- */
+document.addEventListener("click", (e) => {
+  const tab = e.target.closest("nav.tabs button");
+  if (tab) { S.tab = tab.dataset.tab; S.confirmDel = null; render(); window.scrollTo(0, 0); return; }
+  const el = e.target.closest("[data-act]"); if (!el) return;
+  const a = el.dataset.act, v = el.dataset.v;
+  if (a === "say" || a === "saysent") e.stopPropagation();
+  switch (a) {
+    case "goto": S.tab = el.dataset.tab; if (S.tab !== "cards") S.session = null; render(); break;
+    case "dir": S.dir = v; ls.set("kesher-prefs", { dir: S.dir, level: S.sent.level }); if (S.session) S.session.flipped = false; render(); break;
+    case "start": startSession(v); break;
+    case "end": S.session = null; render(); break;
+    case "flip": if (S.session) { S.session.flipped = !S.session.flipped; render(); } break;
+    case "grade": grade(v === "1"); break;
+    case "say": { const w = S.words.find(x => x.id === el.dataset.id); if (w) say(w.he); break; }
+    case "saysent": { const it = S.sent.items[+el.dataset.i]; if (it) say(it.he.replace(/[\[\]]/g, "")); break; }
+    case "level": S.sent.level = v; ls.set("kesher-prefs", { dir: S.dir, level: v }); render(); break;
+    case "focus": S.sent.focus = v; render(); break;
+    case "pick": { const id = el.dataset.id; S.sent.picked.has(id) ? S.sent.picked.delete(id) : S.sent.picked.add(id); render(); break; }
+    case "gen": generate(); break;
+    case "stop": genCtl?.abort(); break;
+    case "smode": S.sent.mode = v; S.sent.items.forEach(it => { it.shown = false; it.picked = null; }); render(); break;
+    case "show": S.sent.items[+el.dataset.i].shown = true; render(); break;
+    case "choose": choose(+el.dataset.i, v); break;
+    case "askdel": S.confirmDel = el.dataset.id; render(); break;
+    case "nodel": S.confirmDel = null; render(); break;
+    case "del": store.remove(el.dataset.id).catch(showErr); S.confirmDel = null; render(); break;
+    case "bulk": {
+      const lines = ($("#f-bulk").value || "").split("\n").map(l => l.trim()).filter(Boolean);
+      const arr = lines.map(l => {
+        if (l.includes("|")) { const p = l.split("|").map(s => s.trim()); return p.length >= 3 ? newWord(p[0], p.slice(2).join(" | "), p[1]) : newWord(p[0], p[1] || ""); }
+        const m = l.match(/^(.+?)\s*(?:=|\s[-–]\s)\s*(.+)$/); return m ? newWord(m[1], m[2]) : newWord(l, "");
+      });
+      addWords(arr).then(r => { const msg = `Added ${r.added} word${r.added === 1 ? "" : "s"}${r.skipped ? `, skipped ${r.skipped} (already in your list or missing a meaning)` : ""}.`; render(); const m = $("#addMsg"); if (m) m.textContent = msg; });
+      break;
+    }
+  }
+});
+document.addEventListener("submit", (e) => {
+  if (e.target.id !== "addForm") return;
+  e.preventDefault();
+  const w = newWord($("#f-he").value, $("#f-en").value, $("#f-tr").value, $("#f-pos").value, $("#f-note").value);
+  addWords([w]).then(r => { render(); const m = $("#addMsg"); if (m) m.textContent = r.added ? `Added ${w.he}.` : `${w.he} is already in your list.`; $("#f-he")?.focus(); });
+});
+document.addEventListener("input", (e) => {
+  if (e.target.id === "f-search") { S.filter = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#f-search"); s.focus(); s.setSelectionRange(pos, pos); }
+});
+document.addEventListener("keydown", (e) => {
+  if (S.tab !== "cards" || !S.session?.queue.length || /input|textarea|select/i.test(e.target.tagName)) return;
+  if (e.key === " " || e.key === "Enter") { e.preventDefault(); S.session.flipped = !S.session.flipped; render(); }
+  else if (S.session.flipped && (e.key === "1" || e.key === "ArrowLeft")) grade(false);
+  else if (S.session.flipped && (e.key === "2" || e.key === "ArrowRight")) grade(true);
+});
+
+boot();
+})();
+</script>
