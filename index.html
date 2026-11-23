@@ -58,10 +58,11 @@ header.top {
 .stats b { color: var(--ink); font-weight: 600; }
 nav.tabs { display: flex; gap: 4px; width: 100%; }
 nav.tabs button {
-  flex: 1; background: none; border: none; padding: 10px 8px 12px; color: var(--muted);
+  flex: 1; background: none; border: none; padding: 10px 4px 12px; color: var(--muted); white-space: nowrap;
   font-weight: 500; border-bottom: 3px solid transparent;
 }
 nav.tabs button[aria-selected="true"] { color: var(--accent); border-bottom-color: var(--accent); }
+@media (max-width: 440px) { nav.tabs button { font-size: 14px; } }
 
 main { padding-block: 24px 64px; display: flex; flex-direction: column; gap: 20px; }
 h2 { font-size: 18px; margin: 0; text-wrap: balance; }
@@ -167,6 +168,28 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
 .preview .pv .he { font-size: 22px; }
 .preview .pv .tr { color: var(--muted); font-style: italic; font-size: 14px; }
 .preview .dup { opacity: .55; }
+/* Listening */
+.listen { display: flex; flex-direction: column; gap: 16px; }
+.player { display: flex; flex-direction: column; align-items: center; gap: 12px; padding-block: 8px; }
+.play {
+  width: 84px; height: 84px; border-radius: 50%; border: none; background: var(--accent); color: var(--surface);
+  display: grid; place-items: center; box-shadow: 0 8px 24px -10px var(--accent);
+}
+.play svg { width: 36px; height: 36px; margin-left: 4px; }
+.play:active { transform: scale(.96); }
+.listen-he { font-size: 28px; line-height: 1.6; text-align: center; }
+.listen-he mark { background: var(--mark-soft); color: inherit; border-bottom: 2px solid var(--mark); padding: 0 2px; border-radius: 3px; }
+.listen .reveal { text-align: center; display: flex; flex-direction: column; gap: 2px; }
+.listen .reveal .tr { color: var(--muted); font-style: italic; }
+.listen .gram { font-size: 13px; color: var(--muted); }
+.answer-box { display: flex; gap: 10px; align-items: flex-start; }
+.answer-box textarea { min-height: 80px; flex: 1; min-width: 0; }
+.mic.small-mic { width: 48px; height: 48px; }
+.mic.small-mic svg { width: 22px; height: 22px; }
+.verdict { align-self: flex-start; font-weight: 600; padding: 4px 12px; border-radius: 999px; font-size: 14px; }
+.verdict.right { background: var(--good-soft); color: var(--good); }
+.verdict.close { background: var(--mark-soft); color: var(--ink); }
+.verdict.wrong { background: var(--bad-soft); color: var(--bad); }
 .empty { text-align: center; padding: 32px 16px; color: var(--muted); }
 .empty .he { font-size: 40px; color: var(--ink); display: block; margin-bottom: 8px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -179,6 +202,7 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
     <nav class="tabs" role="tablist">
       <button role="tab" data-tab="cards" aria-selected="true">Flashcards</button>
       <button role="tab" data-tab="sentences" aria-selected="false">Sentences</button>
+      <button role="tab" data-tab="listen" aria-selected="false">Listening</button>
       <button role="tab" data-tab="words" aria-selected="false">My words</button>
     </nav>
   </div>
@@ -198,10 +222,13 @@ const S = {
   session: null,         // {queue, done, right, flipped}
   sent: { level: "beginner", focus: "due", picked: new Set(), items: [], mode: "read", busy: false, error: "" },
   confirmDel: null, filter: "",
-  dict: null,
+  dict: null, dictTarget: "voice", dictState: "idle", listenPartial: "",
+  webVoice: null, heWarn: false,
+  listen: { items: [], i: 0, focus: "due", busy: false, checking: false, error: "", right: 0, close: 0 },
   voice: { text: "", partial: "", state: "idle", lang: "en", busy: false, items: [], error: "", msg: "" },
 };
 const MIC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>';
+const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>';
 const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -237,6 +264,7 @@ async function boot() {
   const [db, sample, tts, dict] = use ? await Promise.all([use("db"), use("sample"), use("tts"), use("dictation")].map(p => p.catch(() => null))) : [null, null, null, null];
   S.sample = sample; S.tts = tts;
   if (dict) setupDictation(dict);
+  setupAudio();
   if (db) {
     S.db = db; S.mode = "db";
     const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
@@ -264,7 +292,7 @@ function stats() {
 // Re-rendering replaces #main, so carry over what the person was typing and where the cursor was.
 function render() {
   const keep = {};
-  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.id !== "v-text" && el.id !== "f-search") keep[el.id] = el.value; });
+  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.id !== "v-text" && el.id !== "l-answer" && el.id !== "f-search") keep[el.id] = el.value; });
   const act = document.activeElement; const actId = act?.id; let sel = null;
   try { sel = act && "selectionStart" in act ? [act.selectionStart, act.selectionEnd] : null; } catch {}
   renderInner();
@@ -278,7 +306,7 @@ function renderInner() {
   const m = $("#main");
   if (!S.loaded) { m.innerHTML = `<div class="empty">${S.slow ? "Can't reach your saved words yet. Check your connection." : "Loading your words…"}</div>`; return; }
   const top = S.dbError ? `<div class="banner">Your saved words couldn't load (${esc(S.dbError)}). Reload the page to try again.</div>` : "";
-  m.innerHTML = top + (S.tab === "cards" ? viewCards() : S.tab === "sentences" ? viewSentences() : viewWords());
+  m.innerHTML = top + (S.tab === "cards" ? viewCards() : S.tab === "sentences" ? viewSentences() : S.tab === "listen" ? viewListen() : viewWords());
 }
 
 function emptyState(msg) {
@@ -326,7 +354,7 @@ function viewCards() {
     <div class="card" data-act="flip" role="button" tabindex="0" aria-label="Flip card">
       ${w.pos ? `<div class="pos">${esc(w.pos)}</div>` : ""}
       ${front}
-      ${(heFirst || s.flipped) && S.tts ? `<button class="speak" data-act="say" data-id="${w.id}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}
+      ${(heFirst || s.flipped) && canSpeak() ? `<button class="speak" data-act="say" data-id="${w.id}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}
       ${back}
     </div>
     ${s.flipped ? `<div class="answer-row"><button class="btn bad" data-act="grade" data-v="0">Missed it<kbd>1</kbd></button><button class="btn good" data-act="grade" data-v="1">Got it<kbd>2</kbd></button></div>` : ""}
@@ -364,8 +392,7 @@ async function grade(ok) {
 }
 
 /* ---------- sentences ---------- */
-function targetWords() {
-  const f = S.sent.focus;
+function targetWords(f = S.sent.focus) {
   if (f === "pick") return S.words.filter(w => S.sent.picked.has(w.id));
   if (f === "due") { const d = S.words.filter(isDue); if (d.length) return shuffle(d).slice(0, 8); }
   if (f === "weak") return shuffle(S.words).sort((a, b) => (a.box ?? 1) - (b.box ?? 1)).slice(0, 8);
@@ -418,7 +445,7 @@ function sentenceHtml(it, i) {
   const heLine = hide
     ? `<div class="en" style="flex:1;font-size:19px">${esc(it.en)}</div>`
     : `<div class="he" lang="he">${heHtml(it.he, blank)}</div>`;
-  const speak = S.tts && !hide && !blank ? `<button class="speak" data-act="saysent" data-i="${i}" aria-label="Hear sentence">${SPEAK_ICON}</button>` : "";
+  const speak = canSpeak() && !hide && !blank ? `<button class="speak" data-act="saysent" data-i="${i}" aria-label="Hear sentence">${SPEAK_ICON}</button>` : "";
   let extra = "";
   if (mode === "blank") {
     extra = `<div class="opts">${it.options.map(o => {
@@ -438,18 +465,33 @@ function reveal(it, skipEn) {
 }
 
 let genCtl = null;
+const SAMPLE_ERR = {
+  not_granted: "This needs your OK to use Claude. Reload the page and allow it to try again.",
+  rate_limited: "Too many requests just now. Wait a minute and try again.",
+  invalid_json: "Claude's answer came back garbled. Try again.",
+};
 async function generate() {
   const t = S.sent; const targets = targetWords();
   if (!targets.length || !S.sample) return;
   t.busy = true; t.error = ""; render();
   genCtl = new AbortController();
+  try {
+    t.items = await fetchSentences(targets, t.level, genCtl.signal);
+    if (!t.items.length) t.error = "Claude's answer didn't contain any sentences. Try again.";
+  } catch (e) {
+    if (e?.code !== "cancelled") t.error = SAMPLE_ERR[e?.code] || "Couldn't write sentences right now. Try again in a moment.";
+  } finally { t.busy = false; genCtl = null; render(); }
+}
+
+// Asks Claude for 6 sentences built from the learner's words; [brackets] mark their words.
+async function fetchSentences(targets, level, signal) {
   const vocab = S.words.map(w => `${w.he} = ${w.en}${w.pos ? ` (${w.pos})` : ""}`).join("\n");
   const focus = targets.map(w => `${w.he} = ${w.en}`).join("\n");
   const levelText = {
     beginner: "Very short sentences (3-6 words), present tense, simple structure.",
     simple: "Everyday sentences (5-10 words). Present, past or future tense are fine.",
     intermediate: "Natural sentences (8-15 words). Mix tenses, use some connectors like כי, אבל, ש-.",
-  }[t.level];
+  }[level];
   const prompt = `You are a Hebrew tutor writing practice sentences for an English-speaking learner of modern Israeli Hebrew.
 
 The learner's vocabulary list:
@@ -471,23 +513,139 @@ Rules:
 
 Reply with only a JSON array like:
 [{"he":"אני [אוכל] [תפוח]","tr":"ani okhel tapuakh","en":"I eat an apple.","answer":"אוכל","distractors":["שותה","הולך","ספר"],"grammar":""}]`;
+  const out = await S.sample.json(prompt, { signal, cache: false });
+  const arr = Array.isArray(out) ? out : [];
+  return arr.filter(x => x && typeof x.he === "string" && typeof x.en === "string").map(x => {
+    const answer = String(x.answer || (x.he.match(/\[([^\]]+)\]/) || [])[1] || "");
+    const dis = (Array.isArray(x.distractors) ? x.distractors.map(String) : []).filter(d => strip(d) !== strip(answer));
+    while (dis.length < 3) { const r = S.words[Math.floor(Math.random() * S.words.length)]; const c = strip(r.he); if (c !== strip(answer) && !dis.includes(c)) dis.push(c); if (S.words.length < 4) break; }
+    return { he: x.he, tr: String(x.tr || ""), en: x.en, grammar: String(x.grammar || ""), answer, options: shuffle([answer, ...dis.slice(0, 3)]), shown: false, picked: null };
+  });
+}
+
+// Finds the list word a bracketed form came from (forms may carry prefixes or endings)
+function wordForForm(form) {
+  const a = strip(form).trim();
+  return S.words.find(w => strip(w.he).trim() === a) || S.words.find(w => { const b = strip(w.he).trim(); return b.length > 1 && (a.includes(b) || b.includes(a)); });
+}
+
+/* ---------- listening ---------- */
+function viewListen() {
+  if (!S.words.length) return emptyState("Add a few words and you can practise hearing them in sentences.");
+  const L = S.listen; const t = S.sent;
+  const intro = `<div><h2>Listening</h2><p class="sub">Hear a Hebrew sentence that uses your words, then say or type what it means in English. Claude checks your answer.</p></div>`;
+  const noAudio = !S.tts && !S.webVoice
+    ? `<div class="banner">This browser can't play Hebrew audio here. Try Chrome, Edge, or the Claude desktop app.</div>`
+    : S.heWarn ? `<div class="banner">Hebrew audio may sound off on this device. If it does, try Chrome, Edge, or the Claude desktop app.</div>` : "";
+  if (!L.items.length || L.i >= L.items.length) {
+    const done = L.items.length && L.i >= L.items.length;
+    return `${intro}${noAudio}
+      ${done ? `<div class="panel empty"><span class="he" lang="he">${L.right >= L.items.length - 1 ? "מְצֻיָּן!" : "יֹפִי!"}</span>Round done: ${L.right} right, ${L.close} close, out of ${L.items.length}. Words you missed are back in your flashcard reviews.</div>` : ""}
+      <div class="panel" style="display:flex;flex-direction:column;gap:14px">
+        <div class="row" style="gap:18px">
+          <div><label class="lbl">Level</label><div class="seg" role="group">
+            ${[["beginner", "Beginner"], ["simple", "Everyday"], ["intermediate", "Intermediate"]].map(([v, l]) => `<button data-act="level" data-v="${v}" aria-pressed="${t.level === v}">${l}</button>`).join("")}</div></div>
+          <div><label class="lbl">Focus on</label><div class="seg" role="group">
+            ${[["due", "Due words"], ["weak", "Weakest"], ["mix", "Random"]].map(([v, l]) => `<button data-act="lfocus" data-v="${v}" aria-pressed="${L.focus === v}">${l}</button>`).join("")}</div></div>
+        </div>
+        <div class="row">
+          <button class="btn primary" data-act="lstart" ${L.busy || !S.sample ? "disabled" : ""}>${L.busy ? "Writing sentences…" : done ? "New round" : "Start a round of 6"}</button>
+        </div>
+        ${!S.sample ? `<p class="note">Listening rounds use Claude, which is only available when you open this page on claude.ai.</p>` : ""}
+        ${L.error ? `<div class="banner">${esc(L.error)}</div>` : ""}
+      </div>`;
+  }
+  const it = L.items[L.i];
+  const live = S.dictTarget === "listen" && S.dictState !== "idle";
+  const r = it.result;
+  const verdict = r ? `<div class="verdict ${r.verdict}">${{ right: "Right", close: "Close", wrong: "Not quite" }[r.verdict]}</div>` : "";
+  const textBlock = it.showText || r
+    ? `<div class="he listen-he" lang="he">${heHtml(it.he)}</div>${r ? `<div class="reveal"><div class="tr">${esc(it.tr)}</div><div><b>Meaning:</b> ${esc(it.en)}</div>${it.grammar ? `<div class="gram">${esc(it.grammar)}</div>` : ""}</div>` : ""}`
+    : "";
+  return `${intro}${noAudio}
+    <div class="row" style="justify-content:space-between"><span class="note">Sentence ${L.i + 1} of ${L.items.length}</span><button class="btn small" data-act="lquit">End round</button></div>
+    <div class="progress"><div style="width:${Math.round(100 * L.i / L.items.length)}%"></div></div>
+    <div class="panel listen">
+      <div class="player">
+        <button class="play" data-act="lplay" data-r="1" aria-label="Play sentence">${PLAY_ICON}</button>
+        <div class="row"><button class="btn small" data-act="lplay" data-r="0.7">Play slower</button>${!it.showText && !r ? `<button class="btn small" data-act="ltext">Show the Hebrew (hint)</button>` : ""}</div>
+      </div>
+      ${textBlock}
+      <div class="answer">
+        <label class="lbl" for="l-answer">What does it mean in English?</label>
+        <div class="answer-box">
+          <textarea id="l-answer" placeholder="Type your translation${S.dict ? ", or tap the mic and say it" : ""}" ${r ? "readonly" : ""}>${esc(it.answer)}</textarea>
+          ${S.dict && !r ? `<button class="mic small-mic ${live ? "live" : ""}" data-act="lmic" aria-label="${live ? "Stop listening" : "Say your answer"}">${live ? STOP_ICON : MIC_ICON}</button>` : ""}
+        </div>
+        <div class="partial" id="l-partial">${live ? esc(S.listenPartial || "Listening… say your answer, then tap stop.") : ""}</div>
+      </div>
+      ${verdict}${r?.feedback ? `<p style="margin:0">${esc(r.feedback)}</p>` : ""}
+      ${L.error ? `<div class="banner">${esc(L.error)}</div>` : ""}
+      <div class="row">
+        ${r ? `<button class="btn primary" data-act="lnext">${L.i + 1 < L.items.length ? "Next sentence" : "Finish round"}</button>`
+            : `<button class="btn primary" data-act="lcheck" ${L.checking || live || !it.answer.trim() ? "disabled" : ""}>${L.checking ? "Checking…" : "Check my answer"}</button><button class="btn" data-act="lskip" ${L.checking ? "disabled" : ""}>I don't know</button>`}
+      </div>
+    </div>`;
+}
+
+async function startListening() {
+  const L = S.listen; if (!S.sample) return;
+  const targets = targetWords(L.focus);
+  L.busy = true; L.error = ""; render();
   try {
-    const out = await S.sample.json(prompt, { signal: genCtl.signal, cache: false });
-    const arr = Array.isArray(out) ? out : [];
-    t.items = arr.filter(x => x && typeof x.he === "string" && typeof x.en === "string").map(x => {
-      const answer = String(x.answer || (x.he.match(/\[([^\]]+)\]/) || [])[1] || "");
-      const dis = (Array.isArray(x.distractors) ? x.distractors.map(String) : []).filter(d => strip(d) !== strip(answer));
-      while (dis.length < 3) { const r = S.words[Math.floor(Math.random() * S.words.length)]; const c = strip(r.he); if (c !== strip(answer) && !dis.includes(c)) dis.push(c); if (S.words.length < 4) break; }
-      return { he: x.he, tr: String(x.tr || ""), en: x.en, grammar: String(x.grammar || ""), answer, options: shuffle([answer, ...dis.slice(0, 3)]), shown: false, picked: null };
-    });
-    if (!t.items.length) t.error = "Claude's answer didn't contain any sentences. Try again.";
-  } catch (e) {
-    if (e?.code !== "cancelled") t.error = {
-      not_granted: "Sentence writing needs your OK to use Claude. Reload the page and allow it to try again.",
-      rate_limited: "Too many requests just now. Wait a minute and try again.",
-      invalid_json: "Claude's answer came back garbled. Try again.",
-    }[e?.code] || "Couldn't write sentences right now. Try again in a moment.";
-  } finally { t.busy = false; genCtl = null; render(); }
+    const items = await fetchSentences(targets, S.sent.level);
+    L.items = items.map(x => ({ ...x, answer: "", result: null, showText: false }));
+    L.i = 0; L.right = 0; L.close = 0;
+    if (!L.items.length) L.error = "Claude's answer didn't contain any sentences. Try again.";
+  } catch (e) { L.error = SAMPLE_ERR[e?.code] || "Couldn't write sentences right now. Try again in a moment."; }
+  finally { L.busy = false; render(); }
+}
+
+function playCurrent(rate) {
+  const it = S.listen.items[S.listen.i]; if (!it) return;
+  say(it.he.replace(/[\[\]]/g, ""), rate);
+}
+
+async function checkListen(skip) {
+  const L = S.listen; const it = L.items[L.i]; if (!it || it.result) return;
+  const forms = [...it.he.matchAll(/\[([^\]]+)\]/g)].map(m => m[1]);
+  if (skip) {
+    it.result = { verdict: "wrong", feedback: "No problem. Listen again with the text showing, then try the next one.", missed: forms };
+    applyListenResult(it); render(); return;
+  }
+  L.checking = true; L.error = ""; render();
+  const prompt = `You are grading a listening-comprehension answer from an English-speaking learner of modern Israeli Hebrew. They heard the Hebrew sentence (they did not see it) and translated it into English. Their answer may come from speech-to-text, so ignore spelling, punctuation and small transcription slips.
+
+Hebrew sentence: ${it.he.replace(/[\[\]]/g, "")}
+Correct meaning: ${it.en}
+The learner's vocabulary words in this sentence: ${forms.join(", ")}
+Learner's answer: """${it.answer.trim()}"""
+
+Judge the meaning, not word-for-word wording.
+- "right": the meaning is fully correct (synonyms and natural rephrasing are fine).
+- "close": the main idea is right but a detail is wrong or missing (tense, person, a word).
+- "wrong": the meaning is mostly wrong or missing.
+"feedback": 1-2 short, friendly sentences in plain English. Say specifically what they got right or which word they missed and what it means. No praise padding.
+"missed": the vocabulary words from the list above (exactly as given) whose meaning they got wrong or left out. [] if none.
+
+Reply with only JSON: {"verdict":"right","feedback":"...","missed":[]}`;
+  try {
+    const r = await S.sample.json(prompt, { cache: false, modelTier: "quick" });
+    const verdict = ["right", "close", "wrong"].includes(r?.verdict) ? r.verdict : "close";
+    it.result = { verdict, feedback: String(r?.feedback || ""), missed: Array.isArray(r?.missed) ? r.missed.map(String) : [] };
+    applyListenResult(it);
+  } catch (e) { L.error = SAMPLE_ERR[e?.code] || "Couldn't check your answer right now. Try again."; }
+  finally { L.checking = false; render(); }
+}
+function applyListenResult(it) {
+  const L = S.listen;
+  if (it.result.verdict === "right") L.right++; else if (it.result.verdict === "close") L.close++;
+  // Missed words go back into flashcard review
+  const seen = new Set();
+  for (const f of it.result.missed) {
+    const w = wordForForm(f); if (!w || seen.has(w.id)) continue; seen.add(w.id);
+    store.patch(w.id, { box: 1, due: now() }).catch(showErr);
+  }
 }
 
 function choose(i, v) {
@@ -530,7 +688,7 @@ function viewWords() {
       ? `<button class="btn small bad" data-act="del" data-id="${w.id}">Delete</button><button class="btn small" data-act="nodel">Keep</button>`
       : `<button class="btn small" data-act="askdel" data-id="${w.id}" aria-label="Delete ${esc(w.en)}">Remove</button>`;
     return `<div class="word">
-      <div class="main">${S.tts ? `<button class="speak" data-act="say" data-id="${w.id}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}<span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span>${w.tr ? `<span class="tr">${esc(w.tr)}</span>` : ""}${w.tag ? `<span class="tag">${esc(w.tag)}</span>` : ""}</div>
+      <div class="main">${canSpeak() ? `<button class="speak" data-act="say" data-id="${w.id}" aria-label="Hear it">${SPEAK_ICON}</button>` : ""}<span class="he" lang="he">${esc(w.he)}</span><span>${esc(w.en)}</span>${w.tr ? `<span class="tr">${esc(w.tr)}</span>` : ""}${w.tag ? `<span class="tag">${esc(w.tag)}</span>` : ""}</div>
       <div class="acts"><span class="boxes" title="Strength ${box} of 5">${dots}</span>${del}</div>
       ${w.note ? `<div class="note" style="grid-column:1/-1">${esc(w.note)}</div>` : ""}
     </div>`;
@@ -543,7 +701,7 @@ function viewWords() {
 
 /* ---------- voice / free-form capture ---------- */
 function viewVoice() {
-  const v = S.voice; const live = v.state !== "idle";
+  const v = S.voice; const live = S.dictTarget === "voice" && S.dictState !== "idle";
   const canMic = !!S.dict;
   const micBtn = canMic
     ? `<button class="mic ${live ? "live" : ""}" data-act="mic" aria-label="${live ? "Stop listening" : "Start speaking"}">${live ? STOP_ICON : MIC_ICON}</button>`
@@ -551,7 +709,7 @@ function viewVoice() {
   const headline = !canMic
     ? `<b>Type your words the way you'd say them</b><span class="note">Voice input works in Chrome or Edge, or the main window of the Claude desktop app. You can type the same way here.</span>`
     : live
-      ? `<b>${v.state === "starting" ? "Getting the mic ready…" : v.state === "finishing" ? "Finishing up…" : "Listening. Say your words, then tap stop."}</b><span class="note">e.g. "kelev means dog, chatul means cat, add the word for apple"</span>`
+      ? `<b>${S.dictState === "starting" ? "Getting the mic ready…" : S.dictState === "finishing" ? "Finishing up…" : "Listening. Say your words, then tap stop."}</b><span class="note">e.g. "kelev means dog, chatul means cat, add the word for apple"</span>`
       : `<b>Speak or type new words</b><span class="note">Say them any way you like: "kelev means dog", "lirkod, to dance", or just "the word for apple". Claude turns it into proper Hebrew entries.</span>`;
   const langSeg = canMic ? `<div class="seg" role="group" aria-label="Language you're speaking">
       <button data-act="vlang" data-v="en" aria-pressed="${v.lang === "en"}">Speaking English</button>
@@ -576,46 +734,93 @@ function viewVoice() {
     </section>`;
 }
 
+// One microphone, two places to send words: the add-words box ("voice") or a listening answer ("listen")
+function micErr(code, heMode) {
+  return {
+    not_granted: "The microphone is off for this page. Turn it on from the page's Permissions menu, or type instead.",
+    unavailable: heMode ? "Hebrew voice input isn't available here. Switch to 'Speaking English' and say the Hebrew words as they sound." : "Voice input isn't available for your account here. You can type instead.",
+    rate_limited: "The mic is busy right now. Try again in a moment.",
+    upstream_error: "The mic or speech service had a problem. Try again.",
+  }[code];
+}
 function setupDictation(d) {
   S.dict = d;
-  d.onPartial(({ text }) => { S.voice.partial = text; const p = $("#v-partial"); if (p) p.textContent = text; });
+  d.onPartial(({ text }) => {
+    if (S.dictTarget === "listen") { S.listenPartial = text; const p = $("#l-partial"); if (p) p.textContent = text || "Listening… say your answer, then tap stop."; }
+    else { S.voice.partial = text; const p = $("#v-partial"); if (p) p.textContent = text; }
+  });
   d.onFinal(({ text }) => {
+    if (S.dictTarget === "listen") {
+      const it = S.listen.items[S.listen.i]; if (!it || it.result) return;
+      it.answer = it.answer ? it.answer + text : text.replace(/^\s+/, ""); S.listenPartial = "";
+      const t = $("#l-answer"); if (t) t.value = it.answer;
+      return;
+    }
     const v = S.voice; v.text = v.text ? v.text + text : text.replace(/^\s+/, ""); v.partial = "";
     const t = $("#v-text"); if (t) { t.value = v.text; t.scrollTop = t.scrollHeight; }
     const p = $("#v-partial"); if (p) p.textContent = "";
   });
   d.onState(({ state, reason }) => {
-    const v = S.voice; v.state = state;
+    S.dictState = state;
     if (state === "idle") {
-      v.partial = "";
-      const why = {
-        not_granted: "The microphone is off for this page. Turn it on from the page's Permissions menu, or type instead.",
-        unavailable: v.lang === "he" ? "Hebrew voice input isn't available here. Switch to 'Speaking English' and say the Hebrew words as they sound." : "Voice input isn't available for your account here. You can type instead.",
-        rate_limited: "The mic is busy right now. Try again in a moment.",
-        upstream_error: "The mic or speech service had a problem. Try again.",
-      }[reason];
-      if (why) v.error = why;
-      if (reason === "unavailable" && v.lang !== "he") S.dict = null;
-      // Spoke something and stopped: go straight to reading it
-      if ((reason === "stopped" || reason === "viewer_stopped") && v.text.trim() && S.sample && !v.busy) { parseVoice(); return; }
+      const target = S.dictTarget; const v = S.voice;
+      v.partial = ""; S.listenPartial = "";
+      const heMode = target === "voice" && v.lang === "he";
+      const why = micErr(reason, heMode);
+      if (why) { if (target === "listen") S.listen.error = why; else v.error = why; }
+      if (reason === "unavailable" && !heMode) S.dict = null;
+      // Spoke new words and stopped: go straight to reading them
+      if (target === "voice" && (reason === "stopped" || reason === "viewer_stopped") && v.text.trim() && S.sample && !v.busy) { parseVoice(); return; }
     }
     render();
   });
 }
 
-function micClick() {
+function micClick(target) {
   const d = S.dict; if (!d) return;
-  const v = S.voice;
-  if (d.active()) { d.stop().catch(() => {}); return; }
-  v.error = ""; v.msg = "";
+  if (d.active()) { const same = S.dictTarget === target; d.stop().catch(() => {}); if (same) return; }
+  S.dictTarget = target;
+  const heMode = target === "voice" && S.voice.lang === "he";
+  const setErr = (m) => { if (target === "listen") S.listen.error = m; else S.voice.error = m; };
+  setErr(""); if (target === "voice") S.voice.msg = "";
   // start() must run straight from the click
-  d.start(v.lang === "he" ? { language: "he" } : undefined).catch(e => {
-    if (e?.code === "not_granted") v.error = "The microphone is off for this page. Turn it on from the page's Permissions menu, or type instead.";
-    else if (e?.code === "unavailable") v.error = v.lang === "he" ? "Hebrew voice input isn't available here. Switch to 'Speaking English' and say the Hebrew words as they sound." : "Voice input isn't available here. You can type instead.";
-    else if (e?.code === "rate_limited") v.error = "The mic is busy right now. Try again in a moment.";
-    else if (e?.code !== "stopped" && e?.code !== "dismissed") v.error = "Couldn't start the mic. Try again.";
+  d.start(heMode ? { language: "he" } : undefined).catch(e => {
+    const m = micErr(e?.code, heMode) || (e?.code !== "stopped" && e?.code !== "dismissed" ? "Couldn't start the mic. Try again." : "");
+    if (m) setErr(m);
     render();
   });
+}
+
+/* ---------- audio: Claude's voice if it speaks Hebrew, else the browser's Hebrew voice ---------- */
+const canSpeak = () => !!(S.tts || S.webVoice);
+async function setupAudio() {
+  const pickWeb = () => { try { return speechSynthesis.getVoices().find(v => /^(he|iw)\b/i.test(v.lang)) || null; } catch { return null; } };
+  let heOK = null;
+  try { const langs = await S.tts?.languages?.(); if (Array.isArray(langs)) heOK = langs.some(l => /^(he|iw)\b/i.test(l)); } catch {}
+  const update = () => {
+    S.webVoice = pickWeb();
+    S.preferWeb = heOK === false && !!S.webVoice;
+    S.heWarn = heOK === false && !S.webVoice && !!S.tts;
+    render();
+  };
+  update();
+  try { speechSynthesis.addEventListener("voiceschanged", update); } catch {}
+}
+function webSay(text, rate) {
+  try {
+    speechSynthesis.cancel();
+    const u = new SpeechSynthesisUtterance(text); u.voice = S.webVoice; u.lang = S.webVoice.lang; u.rate = rate;
+    speechSynthesis.speak(u); return true;
+  } catch { return false; }
+}
+async function say(text, rate = 1) {
+  if (S.webVoice && (S.preferWeb || !S.tts)) { webSay(text, rate); return; }
+  if (!S.tts) return;
+  try { await S.tts.speak(text, { language: "he", rate }); }
+  catch (e) {
+    if (e?.code === "not_granted") { S.tts = null; render(); }
+    if (!["stopped", "replaced", "viewer_stopped", "busy", "rate_limited"].includes(e?.code) && S.webVoice) webSay(text, rate);
+  }
 }
 
 async function parseVoice() {
@@ -682,10 +887,6 @@ function showErr(e) {
   const el = $("#addMsg"); if (el) el.textContent = m; else { S.sent.error = m; render(); }
 }
 
-async function say(text) {
-  if (!S.tts) return;
-  try { await S.tts.speak(text, { language: "he" }); } catch (e) { if (e?.code === "not_granted") { S.tts = null; render(); } }
-}
 
 /* ---------- events ---------- */
 document.addEventListener("click", (e) => {
@@ -711,7 +912,16 @@ document.addEventListener("click", (e) => {
     case "smode": S.sent.mode = v; S.sent.items.forEach(it => { it.shown = false; it.picked = null; }); render(); break;
     case "show": S.sent.items[+el.dataset.i].shown = true; render(); break;
     case "choose": choose(+el.dataset.i, v); break;
-    case "mic": micClick(); break;
+    case "mic": micClick("voice"); break;
+    case "lmic": micClick("listen"); break;
+    case "lfocus": S.listen.focus = v; render(); break;
+    case "lstart": startListening().then(() => { if (S.listen.items.length) playCurrent(1); }); break;
+    case "lplay": playCurrent(+el.dataset.r || 1); break;
+    case "ltext": S.listen.items[S.listen.i].showText = true; render(); break;
+    case "lcheck": checkListen(false); break;
+    case "lskip": if (S.dict?.active()) S.dict.stop().catch(() => {}); checkListen(true); break;
+    case "lnext": S.listen.i++; S.listen.error = ""; render(); if (S.listen.i < S.listen.items.length) playCurrent(1); window.scrollTo(0, 0); break;
+    case "lquit": if (S.dict?.active() && S.dictTarget === "listen") S.dict.stop().catch(() => {}); S.listen.items = []; S.listen.i = 0; render(); break;
     case "vlang": S.voice.lang = v; S.voice.error = ""; render(); break;
     case "vparse": parseVoice(); break;
     case "vclear": S.voice.text = ""; S.voice.msg = ""; render(); break;
@@ -744,6 +954,12 @@ document.addEventListener("change", (e) => {
   const it = S.voice.items[+i]; if (it) { it.on = e.target.checked; render(); }
 });
 document.addEventListener("input", (e) => {
+  if (e.target.id === "l-answer") {
+    const it = S.listen.items[S.listen.i]; if (!it) return;
+    const had = !!it.answer.trim(); it.answer = e.target.value;
+    if (had !== !!it.answer.trim()) render();
+    return;
+  }
   if (e.target.id === "v-text") {
     const had = !!S.voice.text.trim(); S.voice.text = e.target.value;
     if (had !== !!S.voice.text.trim()) render(); // enable/disable the button
