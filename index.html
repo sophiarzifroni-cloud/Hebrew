@@ -146,6 +146,27 @@ kbd { font-family: inherit; font-size: 11px; border: 1px solid currentColor; bor
 .form-grid .full { grid-column: 1 / -1; }
 @media (max-width: 520px) { .form-grid { grid-template-columns: 1fr; } }
 details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
+/* Voice capture */
+.voice { display: flex; flex-direction: column; gap: 12px; }
+.voice-head { display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+.mic {
+  width: 64px; height: 64px; border-radius: 50%; border: none; flex: none;
+  background: var(--accent); color: var(--surface); display: grid; place-items: center;
+  box-shadow: 0 6px 18px -8px var(--accent);
+}
+.mic svg { width: 28px; height: 28px; }
+.mic.live { background: var(--bad); box-shadow: 0 0 0 6px var(--bad-soft); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { box-shadow: 0 0 0 12px var(--bad-soft); } }
+.voice-head .say { flex: 1; min-width: 200px; }
+.voice-head .say b { display: block; font-size: 16px; }
+.partial { color: var(--muted); font-style: italic; min-height: 1.5em; font-size: 14px; }
+.preview { display: flex; flex-direction: column; border: 1px solid var(--line); border-radius: 10px; overflow: hidden; }
+.preview label { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px 12px; align-items: center; padding: 10px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+.preview label:last-child { border-bottom: none; }
+.preview .pv { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; min-width: 0; }
+.preview .pv .he { font-size: 22px; }
+.preview .pv .tr { color: var(--muted); font-style: italic; font-size: 14px; }
+.preview .dup { opacity: .55; }
 .empty { text-align: center; padding: 32px 16px; color: var(--muted); }
 .empty .he { font-size: 40px; color: var(--ink); display: block; margin-bottom: 8px; }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; } }
@@ -177,7 +198,11 @@ const S = {
   session: null,         // {queue, done, right, flipped}
   sent: { level: "beginner", focus: "due", picked: new Set(), items: [], mode: "read", busy: false, error: "" },
   confirmDel: null, filter: "",
+  dict: null,
+  voice: { text: "", partial: "", state: "idle", lang: "en", busy: false, items: [], error: "", msg: "" },
 };
+const MIC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>';
+const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
 const $ = (s, r = document) => r.querySelector(s);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -209,8 +234,9 @@ async function boot() {
   const pref = ls.get("kesher-prefs"); if (pref?.dir) S.dir = pref.dir; if (pref?.level) S.sent.level = pref.level;
   render();
   const use = window.claude?.use?.bind(window.claude);
-  const [db, sample, tts] = use ? await Promise.all([use("db"), use("sample"), use("tts")].map(p => p.catch(() => null))) : [null, null, null];
+  const [db, sample, tts, dict] = use ? await Promise.all([use("db"), use("sample"), use("tts"), use("dictation")].map(p => p.catch(() => null))) : [null, null, null, null];
   S.sample = sample; S.tts = tts;
+  if (dict) setupDictation(dict);
   if (db) {
     S.db = db; S.mode = "db";
     const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
@@ -235,7 +261,17 @@ function stats() {
 }
 
 /* ---------- render ---------- */
+// Re-rendering replaces #main, so carry over what the person was typing and where the cursor was.
 function render() {
+  const keep = {};
+  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.id !== "v-text" && el.id !== "f-search") keep[el.id] = el.value; });
+  const act = document.activeElement; const actId = act?.id; let sel = null;
+  try { sel = act && "selectionStart" in act ? [act.selectionStart, act.selectionEnd] : null; } catch {}
+  renderInner();
+  for (const [id, v] of Object.entries(keep)) { const el = document.getElementById(id); if (el) el.value = v; }
+  if (actId) { const el = document.getElementById(actId); if (el && el !== document.activeElement) { el.focus(); try { if (sel) el.setSelectionRange(sel[0], sel[1]); } catch {} } }
+}
+function renderInner() {
   const st = stats();
   $("#stats").innerHTML = `<span><b>${st.total}</b> words</span><span><b>${st.due}</b> due</span><span><b>${st.strong}</b> strong</span>`;
   document.querySelectorAll("nav.tabs button").forEach(b => b.setAttribute("aria-selected", String(b.dataset.tab === S.tab)));
@@ -472,7 +508,7 @@ function viewWords() {
   const list = S.words.slice().sort((a, b) => (b.added ?? 0) - (a.added ?? 0))
     .filter(w => !q || strip(w.he).includes(strip(q)) || (w.en || "").toLowerCase().includes(q) || (w.tr || "").toLowerCase().includes(q));
   const form = `<form class="panel" id="addForm" style="display:flex;flex-direction:column;gap:12px">
-      <h2>Add a word</h2>
+      <h2>Add one word by typing</h2>
       <div class="form-grid">
         <div><label class="lbl" for="f-he">Hebrew</label><input type="text" id="f-he" class="he" lang="he" dir="rtl" required placeholder="שָׁלוֹם"></div>
         <div><label class="lbl" for="f-en">English</label><input type="text" id="f-en" required placeholder="hello, peace"></div>
@@ -499,10 +535,137 @@ function viewWords() {
       ${w.note ? `<div class="note" style="grid-column:1/-1">${esc(w.note)}</div>` : ""}
     </div>`;
   }).join("");
-  return `${form}<div class="panel">
+  return `${viewVoice()}${form}<div class="panel">
       <div class="row" style="justify-content:space-between;margin-bottom:8px"><h2>My words (${S.words.length})</h2><input type="text" id="f-search" placeholder="Search" style="max-width:200px" value="${esc(S.filter)}"></div>
       ${S.words.length ? `<div class="wordlist">${rows || `<p class="note">No matches.</p>`}</div>` : `<p class="note">Your list is empty. Add words above, or tell Claude in chat which words to add.</p>`}
     </div>`;
+}
+
+/* ---------- voice / free-form capture ---------- */
+function viewVoice() {
+  const v = S.voice; const live = v.state !== "idle";
+  const canMic = !!S.dict;
+  const micBtn = canMic
+    ? `<button class="mic ${live ? "live" : ""}" data-act="mic" aria-label="${live ? "Stop listening" : "Start speaking"}">${live ? STOP_ICON : MIC_ICON}</button>`
+    : "";
+  const headline = !canMic
+    ? `<b>Type your words the way you'd say them</b><span class="note">Voice input works in Chrome or Edge, or the main window of the Claude desktop app. You can type the same way here.</span>`
+    : live
+      ? `<b>${v.state === "starting" ? "Getting the mic ready…" : v.state === "finishing" ? "Finishing up…" : "Listening. Say your words, then tap stop."}</b><span class="note">e.g. "kelev means dog, chatul means cat, add the word for apple"</span>`
+      : `<b>Speak or type new words</b><span class="note">Say them any way you like: "kelev means dog", "lirkod, to dance", or just "the word for apple". Claude turns it into proper Hebrew entries.</span>`;
+  const langSeg = canMic ? `<div class="seg" role="group" aria-label="Language you're speaking">
+      <button data-act="vlang" data-v="en" aria-pressed="${v.lang === "en"}">Speaking English</button>
+      <button data-act="vlang" data-v="he" aria-pressed="${v.lang === "he"}">מדבר/ת עברית</button></div>` : "";
+  const items = v.items.length ? `<div class="preview">${v.items.map((it, i) => `
+      <label class="${it.dup ? "dup" : ""}"><input type="checkbox" data-vi="${i}" ${it.on ? "checked" : ""}>
+        <span class="pv"><span class="he" lang="he">${esc(it.he)}</span><span>${esc(it.en)}</span>${it.tr ? `<span class="tr">${esc(it.tr)}</span>` : ""}${it.pos ? `<span class="tag">${esc(it.pos)}</span>` : ""}${it.dup ? `<span class="note">already in your list</span>` : ""}${it.note ? `<span class="note" style="flex-basis:100%">${esc(it.note)}</span>` : ""}</span>
+      </label>`).join("")}</div>
+      <div class="row"><button class="btn primary" data-act="vadd" ${v.items.some(x => x.on) ? "" : "disabled"}>Add ${v.items.filter(x => x.on).length} word${v.items.filter(x => x.on).length === 1 ? "" : "s"}</button><button class="btn" data-act="vdiscard">Discard</button></div>` : "";
+  return `<section class="panel voice" aria-label="Add words by voice or typing">
+      <div class="voice-head">${micBtn}<div class="say">${headline}</div></div>
+      ${langSeg}
+      <textarea id="v-text" dir="auto" placeholder="${canMic ? "Your words show up here as you speak. You can also type or fix them." : "e.g. kelev means dog, shulchan = table, the word for apple"}">${esc(v.text)}</textarea>
+      <div class="partial" id="v-partial">${esc(v.partial)}</div>
+      <div class="row">
+        <button class="btn ${v.items.length ? "" : "primary"}" data-act="vparse" ${v.busy || live || !v.text.trim() ? "disabled" : ""}>${v.busy ? "Reading your words…" : "Turn into words"}</button>
+        ${v.text && !v.busy ? `<button class="btn small" data-act="vclear">Clear text</button>` : ""}
+        <span class="note">${esc(v.msg)}</span>
+      </div>
+      ${v.error ? `<div class="banner">${esc(v.error)}</div>` : ""}
+      ${items}
+    </section>`;
+}
+
+function setupDictation(d) {
+  S.dict = d;
+  d.onPartial(({ text }) => { S.voice.partial = text; const p = $("#v-partial"); if (p) p.textContent = text; });
+  d.onFinal(({ text }) => {
+    const v = S.voice; v.text = v.text ? v.text + text : text.replace(/^\s+/, ""); v.partial = "";
+    const t = $("#v-text"); if (t) { t.value = v.text; t.scrollTop = t.scrollHeight; }
+    const p = $("#v-partial"); if (p) p.textContent = "";
+  });
+  d.onState(({ state, reason }) => {
+    const v = S.voice; v.state = state;
+    if (state === "idle") {
+      v.partial = "";
+      const why = {
+        not_granted: "The microphone is off for this page. Turn it on from the page's Permissions menu, or type instead.",
+        unavailable: v.lang === "he" ? "Hebrew voice input isn't available here. Switch to 'Speaking English' and say the Hebrew words as they sound." : "Voice input isn't available for your account here. You can type instead.",
+        rate_limited: "The mic is busy right now. Try again in a moment.",
+        upstream_error: "The mic or speech service had a problem. Try again.",
+      }[reason];
+      if (why) v.error = why;
+      if (reason === "unavailable" && v.lang !== "he") S.dict = null;
+      // Spoke something and stopped: go straight to reading it
+      if ((reason === "stopped" || reason === "viewer_stopped") && v.text.trim() && S.sample && !v.busy) { parseVoice(); return; }
+    }
+    render();
+  });
+}
+
+function micClick() {
+  const d = S.dict; if (!d) return;
+  const v = S.voice;
+  if (d.active()) { d.stop().catch(() => {}); return; }
+  v.error = ""; v.msg = "";
+  // start() must run straight from the click
+  d.start(v.lang === "he" ? { language: "he" } : undefined).catch(e => {
+    if (e?.code === "not_granted") v.error = "The microphone is off for this page. Turn it on from the page's Permissions menu, or type instead.";
+    else if (e?.code === "unavailable") v.error = v.lang === "he" ? "Hebrew voice input isn't available here. Switch to 'Speaking English' and say the Hebrew words as they sound." : "Voice input isn't available here. You can type instead.";
+    else if (e?.code === "rate_limited") v.error = "The mic is busy right now. Try again in a moment.";
+    else if (e?.code !== "stopped" && e?.code !== "dismissed") v.error = "Couldn't start the mic. Try again.";
+    render();
+  });
+}
+
+async function parseVoice() {
+  const v = S.voice; const text = v.text.trim();
+  if (!text) return;
+  if (!S.sample) { // No Claude here: fall back to the simple "hebrew = english" parser
+    v.items = text.split(/\n|,|;/).map(l => l.trim()).filter(Boolean).map(l => { const m = l.match(/^(.+?)\s*(?:=|\s[-–]\s|\smeans\s)\s*(.+)$/i); return m ? { he: m[1], en: m[2], tr: "", pos: "", note: "" } : null; }).filter(Boolean);
+    markDups(); if (!v.items.length) v.error = "Write each word like: כלב = dog"; render(); return;
+  }
+  v.busy = true; v.error = ""; v.msg = ""; render();
+  const prompt = `A learner of modern Israeli Hebrew dictated or typed new vocabulary for their word list. It may come from speech-to-text, so Hebrew words are often spelled out phonetically in English letters (e.g. "kelev means dog", "toda is thank you"), possibly misheard. It may also be in Hebrew script, or just an English word they want the Hebrew for ("add the word for apple"), or a mix.
+
+Transcript:
+"""
+${text}
+"""
+
+Pull out every vocabulary item the learner meant to add. For each:
+- "he": the correct Hebrew word in Hebrew script WITH full nikkud (vowel marks). Fix likely speech-recognition mistakes. If only English was given, use the most common modern Israeli Hebrew word for it.
+- "tr": simple transliteration (e.g. "kelev", "khatul").
+- "en": short English meaning as the learner gave it (fix spelling), add a common second meaning only if very useful.
+- "pos": one of noun, verb, adjective, adverb, phrase, other.
+- "note": very short, useful: gender for nouns (m./f.) and plural if irregular; verbs in infinitive unless they said a specific form. "" if nothing useful.
+Ignore filler like "um", "okay", "next word". Do not invent words they didn't mention.
+
+Reply with only a JSON array, e.g. [{"he":"כֶּלֶב","tr":"kelev","en":"dog","pos":"noun","note":"m., pl. כְּלָבִים"}]`;
+  try {
+    const out = await S.sample.json(prompt, { cache: false });
+    v.items = (Array.isArray(out) ? out : []).filter(x => x && x.he && x.en).map(x => ({ he: String(x.he), en: String(x.en), tr: String(x.tr || ""), pos: String(x.pos || ""), note: String(x.note || "") }));
+    markDups();
+    if (!v.items.length) v.error = "Couldn't find any words in that. Try saying it like \"kelev means dog\".";
+  } catch (e) {
+    v.error = {
+      not_granted: "Turning speech into words needs your OK to use Claude. Reload the page and allow it, or use the typing form below.",
+      rate_limited: "Too many requests just now. Wait a minute and try again.",
+      invalid_json: "Claude's answer came back garbled. Try again.",
+    }[e?.code] || "Couldn't read your words right now. Try again in a moment.";
+  } finally { v.busy = false; render(); }
+}
+function markDups() {
+  const have = new Set(S.words.map(w => strip(w.he).trim()));
+  const seen = new Set();
+  for (const it of S.voice.items) { const k = strip(it.he).trim(); it.dup = have.has(k) || seen.has(k); it.on = !it.dup; seen.add(k); }
+}
+async function addVoiceItems() {
+  const v = S.voice;
+  const arr = v.items.filter(x => x.on).map(x => newWord(x.he, x.en, x.tr, x.pos, x.note));
+  const r = await addWords(arr);
+  v.items = []; v.text = ""; v.msg = `Added ${r.added} word${r.added === 1 ? "" : "s"}.`;
+  render();
 }
 
 function newWord(he, en, tr = "", pos = "", note = "") {
@@ -548,6 +711,12 @@ document.addEventListener("click", (e) => {
     case "smode": S.sent.mode = v; S.sent.items.forEach(it => { it.shown = false; it.picked = null; }); render(); break;
     case "show": S.sent.items[+el.dataset.i].shown = true; render(); break;
     case "choose": choose(+el.dataset.i, v); break;
+    case "mic": micClick(); break;
+    case "vlang": S.voice.lang = v; S.voice.error = ""; render(); break;
+    case "vparse": parseVoice(); break;
+    case "vclear": S.voice.text = ""; S.voice.msg = ""; render(); break;
+    case "vdiscard": S.voice.items = []; render(); break;
+    case "vadd": addVoiceItems(); break;
     case "askdel": S.confirmDel = el.dataset.id; render(); break;
     case "nodel": S.confirmDel = null; render(); break;
     case "del": store.remove(el.dataset.id).catch(showErr); S.confirmDel = null; render(); break;
@@ -557,6 +726,7 @@ document.addEventListener("click", (e) => {
         if (l.includes("|")) { const p = l.split("|").map(s => s.trim()); return p.length >= 3 ? newWord(p[0], p.slice(2).join(" | "), p[1]) : newWord(p[0], p[1] || ""); }
         const m = l.match(/^(.+?)\s*(?:=|\s[-–]\s)\s*(.+)$/); return m ? newWord(m[1], m[2]) : newWord(l, "");
       });
+      $("#f-bulk").value = "";
       addWords(arr).then(r => { const msg = `Added ${r.added} word${r.added === 1 ? "" : "s"}${r.skipped ? `, skipped ${r.skipped} (already in your list or missing a meaning)` : ""}.`; render(); const m = $("#addMsg"); if (m) m.textContent = msg; });
       break;
     }
@@ -566,9 +736,19 @@ document.addEventListener("submit", (e) => {
   if (e.target.id !== "addForm") return;
   e.preventDefault();
   const w = newWord($("#f-he").value, $("#f-en").value, $("#f-tr").value, $("#f-pos").value, $("#f-note").value);
+  ["f-he", "f-en", "f-tr", "f-pos", "f-note"].forEach(id => { const el = $("#" + id); if (el) el.value = ""; });
   addWords([w]).then(r => { render(); const m = $("#addMsg"); if (m) m.textContent = r.added ? `Added ${w.he}.` : `${w.he} is already in your list.`; $("#f-he")?.focus(); });
 });
+document.addEventListener("change", (e) => {
+  const i = e.target.dataset?.vi; if (i == null) return;
+  const it = S.voice.items[+i]; if (it) { it.on = e.target.checked; render(); }
+});
 document.addEventListener("input", (e) => {
+  if (e.target.id === "v-text") {
+    const had = !!S.voice.text.trim(); S.voice.text = e.target.value;
+    if (had !== !!S.voice.text.trim()) render(); // enable/disable the button
+    return;
+  }
   if (e.target.id === "f-search") { S.filter = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#f-search"); s.focus(); s.setSelectionRange(pos, pos); }
 });
 document.addEventListener("keydown", (e) => {
