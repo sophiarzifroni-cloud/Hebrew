@@ -178,6 +178,12 @@ details summary { cursor: pointer; color: var(--accent); font-weight: 500; }
 .chip-x { border: none; background: none; padding: 4px 10px 4px 4px; color: var(--muted); font-size: 16px; line-height: 1; }
 .story-title { margin: 0 0 4px; font-size: 17px; }
 .topic { align-self: flex-start; font-size: 11px; text-transform: uppercase; letter-spacing: .06em; color: var(--accent); }
+.scan { display: flex; flex-direction: column; gap: 10px; border-top: 1px solid var(--line); padding-top: 14px; }
+.scan-text b { display: block; }
+.scan label.btn { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+.scan label.btn svg { width: 18px; height: 18px; color: var(--accent); }
+.scan label.btn.disabled { opacity: .5; pointer-events: none; }
+.scan label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* Verbs */
 .ctable h3 { margin: 16px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .08em; color: var(--accent); }
 .ctable-scroll { overflow-x: auto; }
@@ -258,6 +264,8 @@ const S = {
 };
 const MIC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>';
 const DEFAULT_TOPICS = ["the environment", "animals", "veganism", "technology", "nature", "hiking", "travel", "different countries", "yummy vegan food", "politics and world issues", "Israeli policy and issues"];
+const CAM_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 8a2 2 0 0 1 2-2h2l2-3h6l2 3h2a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><circle cx="12" cy="13" r="4"/></svg>';
+const IMG_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-5-5L5 21"/></svg>';
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>';
 const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
@@ -335,7 +343,7 @@ function stats() {
 // Re-rendering replaces #main, so carry over what the person was typing and where the cursor was.
 function render() {
   const keep = {};
-  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.id !== "v-text" && el.id !== "l-answer" && el.id !== "t-about" && el.id !== "f-search") keep[el.id] = el.value; });
+  document.querySelectorAll("#main input[id], #main textarea[id], #main select[id]").forEach(el => { if (el.type !== "checkbox" && el.type !== "file" && el.id !== "v-text" && el.id !== "l-answer" && el.id !== "t-about" && el.id !== "f-search") keep[el.id] = el.value; });
   const act = document.activeElement; const actId = act?.id; let sel = null;
   try { sel = act && "selectionStart" in act ? [act.selectionStart, act.selectionEnd] : null; } catch {}
   renderInner();
@@ -1135,6 +1143,16 @@ function viewVoice() {
         ${v.text && !v.busy ? `<button class="btn small" data-act="vclear">Clear text</button>` : ""}
         <span class="note">${esc(v.msg)}</span>
       </div>
+      <div class="scan">
+        <div class="scan-text"><b>Or scan a page</b><span class="note">Photograph a word list, notes or a worksheet, printed or handwritten. Claude reads the Hebrew, adds nikud and fills in anything missing.</span></div>
+        <div class="row">
+          <label class="btn ${S.sample ? "" : "disabled"}" for="v-cam">${CAM_ICON}Take a photo</label>
+          <label class="btn ${S.sample ? "" : "disabled"}" for="v-pic">${IMG_ICON}Choose photos</label>
+          <input type="file" id="v-cam" accept="image/*" capture="environment" hidden ${S.sample && !v.busy ? "" : "disabled"}>
+          <input type="file" id="v-pic" accept="image/*" multiple hidden ${S.sample && !v.busy ? "" : "disabled"}>
+        </div>
+        ${v.scanMsg ? `<span class="note">${esc(v.scanMsg)}</span>` : ""}
+      </div>
       ${v.error ? `<div class="banner">${esc(v.error)}</div>` : ""}
       ${items}
     </section>`;
@@ -1239,6 +1257,56 @@ async function say(text, rate = 1) {
   }
 }
 
+/* ---------- scan a page ---------- */
+// Shrink big phone photos so they upload fast and fit the size limit; text stays sharp at 2000px
+async function shrinkPhoto(file, types) {
+  try {
+    if (file.size < 1.5e6 && types.includes(file.type)) return file;
+    const bmp = await createImageBitmap(file);
+    const k = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas"); c.width = Math.round(bmp.width * k); c.height = Math.round(bmp.height * k);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    return await new Promise(r => c.toBlob(b => r(b || file), "image/jpeg", 0.88));
+  } catch { return file; }
+}
+async function scanPhotos(fileList) {
+  const v = S.voice; const files = [...(fileList || [])].filter(f => f.type.startsWith("image/"));
+  if (!files.length || !S.sample) return;
+  const lim = await S.sample.limits?.().catch(() => null);
+  if (!lim?.images) { v.error = "Reading photos isn't available here. Open this page on claude.ai in a browser or the Claude app."; render(); return; }
+  const types = lim.images.mediaTypes || ["image/jpeg", "image/png"];
+  const max = lim.images.maxCount || 1;
+  v.busy = true; v.error = ""; v.msg = ""; v.scanMsg = `Reading ${files.length > 1 ? files.length + " photos" : "your photo"}…`; render();
+  const blobs = [];
+  for (const f of files.slice(0, max)) blobs.push(await shrinkPhoto(f, types));
+  const prompt = `The attached photo${blobs.length > 1 ? "s show" : " shows"} a page from someone learning modern Israeli Hebrew: a vocabulary list, notes, a worksheet or a textbook page. It may be handwritten or printed, and may already include English meanings or transliterations.
+
+Pull out every Hebrew vocabulary word or short phrase the learner would want to study. Skip page numbers, instructions, dates, names and full example sentences (but do take the key word out of a sentence if it is clearly the word being taught). Do not invent words that are not on the page.
+For each item:
+- "he": the Hebrew in Hebrew script WITH full nikud (vowel marks). If handwriting is unclear, choose the real Hebrew word that best fits the letters and any meaning written next to it.
+- "en": the English meaning. Use the one written on the page if there is one (fix spelling), otherwise give the common meaning.
+- "tr": simple transliteration (e.g. "kelev").
+- "pos": noun, verb, adjective, adverb, phrase or other.
+- "note": very short and useful: gender for nouns (m./f.) and plural if irregular; verbs in the infinitive unless the page shows a specific form. Add "unclear on the page" if you had to guess. "" if nothing useful.
+
+Reply with only a JSON array, e.g. [{"he":"כֶּלֶב","en":"dog","tr":"kelev","pos":"noun","note":"m., pl. כְּלָבִים"}]`;
+  try {
+    const out = await S.sample.json(prompt, { images: blobs, cache: false });
+    const found = (Array.isArray(out) ? out : []).filter(x => x && x.he && x.en).map(x => ({ he: String(x.he), en: String(x.en), tr: String(x.tr || ""), pos: String(x.pos || ""), note: String(x.note || "") }));
+    v.items = v.items.concat(found); markDups();
+    v.scanMsg = found.length ? `Found ${found.length} word${found.length === 1 ? "" : "s"}${files.length > max ? ` (read the first ${max} photos)` : ""}. Untick any you don't want, then add.` : "";
+    if (!found.length) v.error = "Couldn't find any Hebrew words in that photo. Try a closer, well-lit shot with the page flat.";
+  } catch (e) {
+    v.scanMsg = "";
+    v.error = {
+      not_granted: "Reading photos needs your OK to use Claude. Reload the page and choose Allow.",
+      images_unavailable: "Reading photos isn't available here. Open this page on claude.ai in a browser or the Claude app.",
+      rate_limited: "Too many requests just now. Wait a minute and try again.",
+      invalid_json: "Claude's answer came back garbled. Try the photo again.",
+    }[e?.code] || "Couldn't read that photo. Try again, or try a clearer shot.";
+  } finally { v.busy = false; render(); }
+}
+
 async function parseVoice() {
   const v = S.voice; const text = v.text.trim();
   if (!text) return;
@@ -1285,7 +1353,7 @@ async function addVoiceItems() {
   const v = S.voice;
   const arr = v.items.filter(x => x.on).map(x => newWord(x.he, x.en, x.tr, x.pos, x.note));
   const r = await addWords(arr);
-  v.items = []; v.text = ""; v.msg = `Added ${r.added} word${r.added === 1 ? "" : "s"}.`;
+  v.items = []; v.text = ""; v.scanMsg = ""; v.msg = `Added ${r.added} word${r.added === 1 ? "" : "s"}.`;
   render();
 }
 
@@ -1424,6 +1492,7 @@ document.addEventListener("toggle", (e) => {
 }, true);
 document.addEventListener("keydown", (e) => { if (e.target.id === "t-new" && e.key === "Enter") { e.preventDefault(); $('[data-act="tadd"]')?.click(); } });
 document.addEventListener("change", (e) => {
+  if (e.target.id === "v-cam" || e.target.id === "v-pic") { const fl = e.target.files; scanPhotos(fl).finally(() => { try { e.target.value = ""; } catch {} }); return; }
   const i = e.target.dataset?.vi; if (i == null) return;
   const it = S.voice.items[+i]; if (it) { it.on = e.target.checked; render(); }
 });
