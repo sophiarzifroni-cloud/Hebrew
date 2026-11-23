@@ -290,13 +290,14 @@ async function boot() {
     const timer = setTimeout(() => { if (!S.loaded) { S.slow = true; render(); } }, 10000);
     db.collection("words").onSnapshot(snap => {
       S.words = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      sweepVowels();
       if (!snap.metadata.fromCache) { S.loaded = true; S.slow = false; clearTimeout(timer); }
       else if (S.words.length) S.loaded = true;
       render();
     }, err => { clearTimeout(timer); S.loaded = true; S.dbError = err.code; render(); });
   } else {
     S.words = ls.get("kesher-words") || [];
-    S.loaded = true; render();
+    S.loaded = true; render(); sweepVowels();
   }
 }
 
@@ -743,7 +744,7 @@ function viewWords() {
         <div class="full"><label class="lbl" for="f-note">Note (optional)</label><input type="text" id="f-note" placeholder="e.g. masculine; plural שְׁלוֹמוֹת"></div>
       </div>
       <div class="row"><button class="btn primary" type="submit">Add word</button><span class="note" id="addMsg"></span></div>
-      <details><summary>Add many at once</summary>
+      <details class="bulk" ${S.openBulk ? "open" : ""}><summary>Add many at once</summary>
         <p class="note">One word per line: <span class="he">Hebrew</span> = English, or Hebrew | pronunciation | English.</p>
         <textarea id="f-bulk" dir="auto" placeholder="כֶּלֶב = dog&#10;חָתוּל | khatul | cat"></textarea>
         <div class="row" style="margin-top:8px"><button class="btn" type="button" data-act="bulk">Add these</button></div>
@@ -957,12 +958,25 @@ async function addWords(arr) {
   const existing = new Set(S.words.map(w => strip(w.he)));
   const fresh = arr.filter(w => w.he && w.en && !existing.has(strip(w.he)));
   for (const w of fresh) { await store.put(w).catch(showErr); }
-  addVowels(fresh); // runs in the background
+  sweepVowels(); // nikud gets added in the background
   return { added: fresh.length, skipped: arr.length - fresh.length };
 }
 
 // Nikud: Claude adds the vowel marks to any word typed without them
 const hasNikud = (s) => /[\u05B0-\u05BC\u05C1\u05C2\u05C7]/.test(s || "");
+// Any word without nikud, however it got in (typed, pasted, another device, an earlier failed try),
+// gets picked up here: after every change to the list and on every page load. Two tries per word per visit.
+let vowelTimer = null; const vowelTries = new Map();
+function sweepVowels() {
+  clearTimeout(vowelTimer);
+  vowelTimer = setTimeout(() => {
+    if (!S.sample) return;
+    const todo = S.words.filter(w => !hasNikud(w.he) && !S.vowelPending.has(w.id) && (vowelTries.get(w.id) || 0) < 2);
+    if (!todo.length) return;
+    todo.forEach(w => vowelTries.set(w.id, (vowelTries.get(w.id) || 0) + 1));
+    addVowels(todo);
+  }, 700);
+}
 async function addVowels(list) {
   const todo = list.filter(w => w && w.he && !hasNikud(w.he) && !S.vowelPending.has(w.id));
   if (!todo.length || !S.sample) return;
@@ -995,7 +1009,10 @@ Reply with only a JSON array: [{"id":"abc","he":"כֶּלֶב","tr":"kelev","pos
       await store.patch(w.id, p).catch(() => {});
     }
   } catch (e) {
-    S.vowelErr = SAMPLE_ERR[e?.code] || "Couldn't add the vowels just now.";
+    S.vowelErr = e?.code === "not_granted"
+      ? "Adding nikud needs your OK to use Claude. Reload the page and choose Allow, then it happens automatically."
+      : "Couldn't add nikud just now. Trying again shortly.";
+    if (e?.code !== "not_granted") setTimeout(() => { S.vowelErr = ""; sweepVowels(); }, 30000);
   } finally { todo.forEach(w => S.vowelPending.delete(w.id)); render(); }
 }
 function showErr(e) {
@@ -1030,7 +1047,7 @@ document.addEventListener("click", (e) => {
     case "choose": choose(+el.dataset.i, v); break;
     case "mic": micClick("voice"); break;
     case "lmic": micClick("listen"); break;
-    case "vowels": S.vowelErr = ""; addVowels(S.words); break;
+    case "vowels": S.vowelErr = ""; vowelTries.clear(); sweepVowels(); break;
     case "nikud": S.nikud = !S.nikud; ls.set("kesher-nikud", S.nikud); render(); break;
     case "hmic": S.tab = "words"; S.session = null; micClick("voice"); render(); window.scrollTo(0, 0); break;
     case "ttoggle": { const t = S.prefs.topics[+el.dataset.i]; S.prefs.off = S.prefs.off.includes(t) ? S.prefs.off.filter(x => x !== t) : S.prefs.off.concat(t); S.openInterests = true; savePrefs(); render(); break; }
@@ -1070,9 +1087,12 @@ document.addEventListener("submit", (e) => {
   e.preventDefault();
   const w = newWord($("#f-he").value, $("#f-en").value, $("#f-tr").value, $("#f-pos").value, $("#f-note").value);
   ["f-he", "f-en", "f-tr", "f-pos", "f-note"].forEach(id => { const el = $("#" + id); if (el) el.value = ""; });
-  addWords([w]).then(r => { render(); const m = $("#addMsg"); if (m) m.textContent = r.added ? `Added ${w.he}.` : `${w.he} is already in your list.`; $("#f-he")?.focus(); });
+  addWords([w]).then(r => { render(); const m = $("#addMsg"); if (m) m.textContent = r.added ? (hasNikud(w.he) ? `Added ${w.he}.` : `Added ${w.he}. Adding nikud…`) : `${w.he} is already in your list.`; $("#f-he")?.focus(); });
 });
-document.addEventListener("toggle", (e) => { if (e.target.classList?.contains("interests")) S.openInterests = e.target.open; }, true);
+document.addEventListener("toggle", (e) => {
+  if (e.target.classList?.contains("interests")) S.openInterests = e.target.open;
+  if (e.target.classList?.contains("bulk")) S.openBulk = e.target.open;
+}, true);
 document.addEventListener("keydown", (e) => { if (e.target.id === "t-new" && e.key === "Enter") { e.preventDefault(); $('[data-act="tadd"]')?.click(); } });
 document.addEventListener("change", (e) => {
   const i = e.target.dataset?.vi; if (i == null) return;
