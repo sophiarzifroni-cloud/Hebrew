@@ -257,7 +257,7 @@ const S = {
   voice: { text: "", partial: "", state: "idle", lang: "en", busy: false, items: [], error: "", msg: "" },
 };
 const MIC_ICON = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="2" width="6" height="12" rx="3"/><path d="M5 10a7 7 0 0 0 14 0"/><path d="M12 17v5"/></svg>';
-const DEFAULT_TOPICS = ["the environment", "animals", "veganism", "technology", "nature", "hiking", "travel", "different countries", "yummy vegan food"];
+const DEFAULT_TOPICS = ["the environment", "animals", "veganism", "technology", "nature", "hiking", "travel", "different countries", "yummy vegan food", "politics and world issues", "Israeli policy and issues"];
 const PLAY_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l11-6.5a1 1 0 0 0 0-1.72l-11-6.5A1 1 0 0 0 8 5.5z"/></svg>';
 const STOP_ICON = '<svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><rect x="6" y="6" width="12" height="12" rx="2"/></svg>';
 
@@ -555,7 +555,9 @@ ${memoryRules(6)}
 Rules:
 - Build sentences mostly from the learner's vocabulary. You may add very common basic words (pronouns, את, של, ב-, ל-, ה-, זה, יש, אין, גם, מאוד, ו-) and a few simple everyday words when needed.
 - Conjugate and inflect naturally (gender, number, tense, prefixes). The sentence must be correct, natural Israeli Hebrew.
-- Each sentence uses at least one focus word. Mix the words together so each sentence uses 2 or more of the learner's words when possible.
+- Each sentence uses at least one focus word, and every focus word appears somewhere in the set.
+- Pack in as many of the learner's words as fit naturally: aim for 3 or more per sentence (focus words plus any others from the list). Efficiency matters, but never at the cost of a natural, clear sentence.
+- Verbs: sometimes conjugate them (past, present or future; different persons, genders and numbers) and sometimes keep the infinitive (e.g. after רוצה, צריך, אוהב, אפשר, כדאי). Vary this across the set.
 - In "he", wrap every word from the learner's list in square brackets, exactly as it appears in the sentence, including any attached prefix, e.g. "אני [אוכל] [תפוח] [בבית]". Write "he" WITHOUT nikud.
 - "heN": the same sentence WITH full nikud (vowel marks), with the same square brackets around the same words.
 - "answer" is the first bracketed word, exactly as written inside its brackets.
@@ -580,6 +582,10 @@ Reply with only JSON like:
 // Finds the list word a bracketed form came from (forms may carry prefixes or endings)
 function wordForForm(form) {
   const a = strip(form).trim();
+  // A conjugated verb (ביקרה) belongs to its infinitive (לבקר): check the conjugation tables, ignoring vav/yod spelling differences
+  const loose = (h) => strip(h).replace(/[וי]/g, "").trim();
+  const la = loose(a);
+  for (const w of S.words) { const c = conjFor(w); if (c && c.forms.some(f => { const lf = loose(f.he); return lf === la || (lf.length > 2 && la.endsWith(lf)); })) return w; }
   return S.words.find(w => strip(w.he).trim() === a) || S.words.find(w => { const b = strip(w.he).trim(); return b.length > 1 && (a.includes(b) || b.includes(a)); });
 }
 
@@ -629,6 +635,7 @@ function memoryRules(n) {
 - Emotion and humor: give most sentences a feeling, a small surprise or a gentle joke. Make 1 or 2 of the ${n} playful or a bit absurd; odd images stand out most when mixed in with normal ones.
 - ${S.prefs.story ? `Story: link the ${n} sentences into one short story in order, with a beginning, a small problem and a happy ending. Give it a short English title.` : "Distinct scenes: each sentence stands alone in a clearly different setting."}
 - Values: food is always vegan; animals are respected and never eaten, hunted or harmed.
+- Politics and world issues: keep them real and current-feeling (elections, the Knesset, climate policy, animal-welfare laws, water, housing, tech), factual and respectful. No slogans or put-downs of any group.
 - Correctness and the level always come first. Never make a sentence harder just to make it fun.`;
 }
 
@@ -1059,8 +1066,7 @@ function choose(i, v) {
   it.picked = v; it.shown = true;
   if (strip(v) !== strip(it.answer)) {
     // Missing it in context sends the word back for review
-    const a = strip(it.answer);
-    const w = S.words.find(w => strip(w.he) === a) || S.words.find(w => a.endsWith(strip(w.he)) || a.includes(strip(w.he)));
+    const w = wordForForm(it.answer);
     if (w) store.patch(w.id, { box: 1, due: now() }).catch(showErr);
   }
   render();
@@ -1081,11 +1087,6 @@ function viewWords() {
         <div class="full"><label class="lbl" for="f-note">Note (optional)</label><input type="text" id="f-note" placeholder="e.g. masculine; plural שְׁלוֹמוֹת"></div>
       </div>
       <div class="row"><button class="btn primary" type="submit">Add word</button><span class="note" id="addMsg"></span></div>
-      <details class="bulk" ${S.openBulk ? "open" : ""}><summary>Add many at once</summary>
-        <p class="note">One word per line: <span class="he">Hebrew</span> = English, or Hebrew | pronunciation | English.</p>
-        <textarea id="f-bulk" dir="auto" placeholder="כֶּלֶב = dog&#10;חָתוּל | khatul | cat"></textarea>
-        <div class="row" style="margin-top:8px"><button class="btn" type="button" data-act="bulk">Add these</button></div>
-      </details>
     </form>`;
   const rows = list.map(w => {
     const box = w.box ?? 1;
@@ -1409,16 +1410,6 @@ document.addEventListener("click", (e) => {
     case "nodel": S.confirmDel = null; render(); break;
     case "del": if (S.mode === "db") S.db.collection("conj").doc(el.dataset.id).delete().catch(() => {}); else { delete S.conj[el.dataset.id]; ls.set("kesher-conj", S.conj); }
       store.remove(el.dataset.id).catch(showErr); S.confirmDel = null; render(); break;
-    case "bulk": {
-      const lines = ($("#f-bulk").value || "").split("\n").map(l => l.trim()).filter(Boolean);
-      const arr = lines.map(l => {
-        if (l.includes("|")) { const p = l.split("|").map(s => s.trim()); return p.length >= 3 ? newWord(p[0], p.slice(2).join(" | "), p[1]) : newWord(p[0], p[1] || ""); }
-        const m = l.match(/^(.+?)\s*(?:=|\s[-–]\s)\s*(.+)$/); return m ? newWord(m[1], m[2]) : newWord(l, "");
-      });
-      $("#f-bulk").value = "";
-      addWords(arr).then(r => { const msg = `Added ${r.added} word${r.added === 1 ? "" : "s"}${r.skipped ? `, skipped ${r.skipped} (already in your list or missing a meaning)` : ""}.`; render(); const m = $("#addMsg"); if (m) m.textContent = msg; });
-      break;
-    }
   }
 });
 document.addEventListener("submit", (e) => {
@@ -1430,7 +1421,6 @@ document.addEventListener("submit", (e) => {
 });
 document.addEventListener("toggle", (e) => {
   if (e.target.classList?.contains("interests")) S.openInterests = e.target.open;
-  if (e.target.classList?.contains("bulk")) S.openBulk = e.target.open;
 }, true);
 document.addEventListener("keydown", (e) => { if (e.target.id === "t-new" && e.key === "Enter") { e.preventDefault(); $('[data-act="tadd"]')?.click(); } });
 document.addEventListener("change", (e) => {
